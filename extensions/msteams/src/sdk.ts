@@ -77,6 +77,13 @@ type FileConsentCtx = import("@microsoft/teams.apps/dist/contexts/index.js").IAc
   import("@microsoft/teams.api/dist/activities/invoke/file-consent.js").IFileConsentInvokeActivity
 >;
 type ActivityCtx = import("@microsoft/teams.apps/dist/contexts/index.js").IActivityContext;
+type SigninTokenExchangeCtx =
+  import("@microsoft/teams.apps/dist/contexts/index.js").IActivityContext<
+    import("@microsoft/teams.api/dist/activities/invoke/sign-in/token-exchange.js").ISignInTokenExchangeInvokeActivity
+  >;
+type SigninVerifyStateCtx = import("@microsoft/teams.apps/dist/contexts/index.js").IActivityContext<
+  import("@microsoft/teams.api/dist/activities/invoke/sign-in/verify-state.js").ISignInVerifyStateInvokeActivity
+>;
 
 type MSTeamsAppOn = {
   // Adaptive card actions (Action.Execute Universal Action Model). Typed
@@ -92,6 +99,18 @@ type MSTeamsAppOn = {
     name: "file.consent.accept" | "file.consent.decline",
     cb: (ctx: FileConsentCtx) => void | Promise<void>,
   ): MSTeamsApp;
+  // SSO sign-in invokes. Registering these replaces the SDK's built-in
+  // system defaults: when a user route shares a name with a system route,
+  // the SDK's router removes the default. Only our handler runs; SDK
+  // wraps `void` to `{ status: 200 }`.
+  (
+    name: "signin.token-exchange",
+    cb: (ctx: SigninTokenExchangeCtx) => void | Promise<void>,
+  ): MSTeamsApp;
+  (
+    name: "signin.verify-state",
+    cb: (ctx: SigninVerifyStateCtx) => void | Promise<void>,
+  ): MSTeamsApp;
   // Activity catch-all. Default void return — used as our dispatch into
   // the BotBuilder-shaped handler.
   (name: "activity", cb: (ctx: ActivityCtx) => void | Promise<void>): MSTeamsApp;
@@ -99,7 +118,12 @@ type MSTeamsAppOn = {
   <
     Name extends Exclude<
       keyof MSTeamsRoutes,
-      "card.action" | "file.consent.accept" | "file.consent.decline" | "activity"
+      | "card.action"
+      | "file.consent.accept"
+      | "file.consent.decline"
+      | "signin.token-exchange"
+      | "signin.verify-state"
+      | "activity"
     >,
   >(
     name: Name,

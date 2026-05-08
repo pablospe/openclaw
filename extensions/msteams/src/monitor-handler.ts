@@ -10,12 +10,6 @@ import { createMSTeamsMessageHandler } from "./monitor-handler/message-handler.j
 import { createMSTeamsReactionHandler } from "./monitor-handler/reaction-handler.js";
 import { getMSTeamsRuntime } from "./runtime.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
-import {
-  handleSigninTokenExchangeInvoke,
-  handleSigninVerifyStateInvoke,
-  parseSigninTokenExchangeValue,
-  parseSigninVerifyStateValue,
-} from "./sso.js";
 import { buildGroupWelcomeText, buildWelcomeCard } from "./welcome-card.js";
 export type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
 import type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
@@ -123,7 +117,7 @@ async function isFeedbackInvokeAuthorized(
   });
 }
 
-async function isSigninInvokeAuthorized(
+export async function isSigninInvokeAuthorized(
   context: MSTeamsTurnContext,
   deps: MSTeamsMessageHandlerDeps,
 ): Promise<boolean> {
@@ -353,94 +347,6 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
               type: "message",
               text,
             },
-          });
-        }
-        return;
-      }
-
-      // Bot Framework OAuth SSO: Teams sends signin/tokenExchange (with a
-      // Teams-provided exchangeable token) or signin/verifyState (magic
-      // code fallback) after an oauthCard is presented. We must ack with
-      // HTTP 200 and, if configured, exchange the token with the Bot
-      // Framework User Token service and persist it for downstream tools.
-      if (
-        ctx.activity?.type === "invoke" &&
-        (ctx.activity?.name === "signin/tokenExchange" ||
-          ctx.activity?.name === "signin/verifyState")
-      ) {
-        // Always ack immediately — silently dropping the invoke causes
-        // the Teams card UI to report "Something went wrong".
-        await ctx.sendActivity({ type: "invokeResponse", value: { status: 200, body: {} } });
-
-        if (!(await isSigninInvokeAuthorized(ctx, deps))) {
-          return;
-        }
-
-        if (!deps.sso) {
-          deps.log.debug?.("signin invoke received but msteams.sso is not configured", {
-            name: ctx.activity.name,
-          });
-          return;
-        }
-
-        const user = {
-          userId: ctx.activity.from?.aadObjectId ?? ctx.activity.from?.id ?? "",
-          channelId: ctx.activity.channelId ?? "msteams",
-        };
-
-        try {
-          if (ctx.activity.name === "signin/tokenExchange") {
-            const parsed = parseSigninTokenExchangeValue(ctx.activity.value);
-            if (!parsed) {
-              deps.log.debug?.("invalid signin/tokenExchange invoke value");
-              return;
-            }
-            const result = await handleSigninTokenExchangeInvoke({
-              value: parsed,
-              user,
-              deps: deps.sso,
-            });
-            if (result.ok) {
-              deps.log.info("msteams sso token exchanged", {
-                userId: user.userId,
-                hasExpiry: Boolean(result.expiresAt),
-              });
-            } else {
-              deps.log.error("msteams sso token exchange failed", {
-                code: result.code,
-                status: result.status,
-                message: result.message,
-              });
-            }
-            return;
-          }
-
-          // signin/verifyState
-          const parsed = parseSigninVerifyStateValue(ctx.activity.value);
-          if (!parsed) {
-            deps.log.debug?.("invalid signin/verifyState invoke value");
-            return;
-          }
-          const result = await handleSigninVerifyStateInvoke({
-            value: parsed,
-            user,
-            deps: deps.sso,
-          });
-          if (result.ok) {
-            deps.log.info("msteams sso verifyState succeeded", {
-              userId: user.userId,
-              hasExpiry: Boolean(result.expiresAt),
-            });
-          } else {
-            deps.log.error("msteams sso verifyState failed", {
-              code: result.code,
-              status: result.status,
-              message: result.message,
-            });
-          }
-        } catch (err) {
-          deps.log.error("msteams sso invoke handler error", {
-            error: formatUnknownError(err),
           });
         }
         return;

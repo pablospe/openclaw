@@ -1,16 +1,12 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../runtime-api.js";
+import { type MSTeamsMessageHandlerDeps } from "./monitor-handler.js";
 import {
-  type MSTeamsActivityHandler,
-  type MSTeamsMessageHandlerDeps,
-  registerMSTeamsHandlers,
-} from "./monitor-handler.js";
-import {
-  createActivityHandler as baseCreateActivityHandler,
   createMSTeamsMessageHandlerDeps,
   installMSTeamsTestRuntime,
 } from "./monitor-handler.test-helpers.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
+import { runMSTeamsSigninInvokeHandler } from "./signin-invoke.js";
 import { createMSTeamsSsoTokenStoreMemory } from "./sso-token-store.js";
 import {
   type MSTeamsSsoFetch,
@@ -19,12 +15,6 @@ import {
   parseSigninTokenExchangeValue,
   parseSigninVerifyStateValue,
 } from "./sso.js";
-
-function createActivityHandler() {
-  const run = vi.fn(async () => undefined);
-  const handler = baseCreateActivityHandler(run);
-  return { handler, run };
-}
 
 function createDepsWithoutSso(
   overrides: Partial<MSTeamsMessageHandlerDeps> = {},
@@ -48,15 +38,6 @@ function createSsoDeps(params: { fetchImpl: MSTeamsSsoFetch }) {
     tokenStore,
     tokenProvider,
   };
-}
-
-function createRegisteredSsoHandler(sso: MSTeamsMessageHandlerDeps["sso"]) {
-  const deps = createDepsWithoutSso({ sso });
-  const { handler } = createActivityHandler();
-  const registered = registerMSTeamsHandlers(handler, deps) as MSTeamsActivityHandler & {
-    run: NonNullable<MSTeamsActivityHandler["run"]>;
-  };
-  return { deps, registered };
 }
 
 function createSigninInvokeContext(params: {
@@ -384,27 +365,26 @@ describe("msteams signin invoke handler registration", () => {
     },
   ];
 
-  it("acks signin invokes even when sso is not configured", async () => {
+  it("logs and exits cleanly when sso is not configured", async () => {
     const deps = createDepsWithoutSso();
-    const { handler, run } = createActivityHandler();
-    const registered = registerMSTeamsHandlers(handler, deps) as MSTeamsActivityHandler & {
-      run: NonNullable<MSTeamsActivityHandler["run"]>;
-    };
 
     const ctx = createSigninInvokeContext({
       name: "signin/tokenExchange",
       value: { id: "x", connectionName: "Graph", token: "exchangeable" },
     });
 
-    await registered.run(ctx);
+    await runMSTeamsSigninInvokeHandler(ctx, deps);
 
-    expect(ctx.sendActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "invokeResponse",
-        value: expect.objectContaining({ status: 200 }),
-      }),
-    );
-    expect(run).not.toHaveBeenCalled();
+    // The HTTP 200 InvokeResponse is now written by the SDK from the typed
+    // app.on("signin.token-exchange") return value — this handler must not
+    // ack via ctx.sendActivity (which would post an outbound BF activity
+    // instead of an HTTP response on the new SDK).
+    for (const call of ctx.sendActivity.mock.calls) {
+      const arg = call[0] as Record<string, unknown> | string;
+      if (typeof arg === "object" && arg !== null && "type" in arg) {
+        expect(arg.type).not.toBe("invokeResponse");
+      }
+    }
     expect(deps.log.debug).toHaveBeenCalledWith(
       "signin invoke received but msteams.sso is not configured",
       expect.objectContaining({ name: "signin/tokenExchange" }),
@@ -428,10 +408,6 @@ describe("msteams signin invoke handler registration", () => {
         ]);
         const { sso, tokenStore } = createSsoDeps({ fetchImpl });
         const deps = createDepsWithoutSso({ cfg: scenario.cfg, sso });
-        const { handler } = createActivityHandler();
-        const registered = registerMSTeamsHandlers(handler, deps) as MSTeamsActivityHandler & {
-          run: NonNullable<MSTeamsActivityHandler["run"]>;
-        };
 
         const ctx = createSigninInvokeContext({
           name: invoke.name,
@@ -439,14 +415,8 @@ describe("msteams signin invoke handler registration", () => {
           ...scenario.context,
         });
 
-        await registered.run(ctx);
+        await runMSTeamsSigninInvokeHandler(ctx, deps);
 
-        expect(ctx.sendActivity).toHaveBeenCalledWith(
-          expect.objectContaining({
-            type: "invokeResponse",
-            value: expect.objectContaining({ status: 200 }),
-          }),
-        );
         expect(calls).toHaveLength(0);
         const stored = await tokenStore.get({
           connectionName: "GraphConnection",
@@ -475,21 +445,15 @@ describe("msteams signin invoke handler registration", () => {
       }),
     ]);
     const { sso, tokenStore } = createSsoDeps({ fetchImpl });
-    const { deps, registered } = createRegisteredSsoHandler(sso);
+    const deps = createDepsWithoutSso({ sso });
 
     const ctx = createSigninInvokeContext({
       name: "signin/tokenExchange",
       value: { id: "x", connectionName: "GraphConnection", token: "exchangeable" },
     });
 
-    await registered.run(ctx);
+    await runMSTeamsSigninInvokeHandler(ctx, deps);
 
-    expect(ctx.sendActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "invokeResponse",
-        value: expect.objectContaining({ status: 200 }),
-      }),
-    );
     expect(deps.log.info).toHaveBeenCalledWith(
       "msteams sso token exchanged",
       expect.objectContaining({ userId: "aad-user-guid", hasExpiry: true }),
@@ -506,18 +470,15 @@ describe("msteams signin invoke handler registration", () => {
       () => ({ ok: false, status: 400, body: "bad request" }),
     ]);
     const { sso } = createSsoDeps({ fetchImpl });
-    const { deps, registered } = createRegisteredSsoHandler(sso);
+    const deps = createDepsWithoutSso({ sso });
 
     const ctx = createSigninInvokeContext({
       name: "signin/tokenExchange",
       value: { id: "x", connectionName: "GraphConnection", token: "exchangeable" },
     });
 
-    await registered.run(ctx);
+    await runMSTeamsSigninInvokeHandler(ctx, deps);
 
-    expect(ctx.sendActivity).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "invokeResponse" }),
-    );
     expect(deps.log.error).toHaveBeenCalledWith(
       "msteams sso token exchange failed",
       expect.objectContaining({ code: "unexpected_response", status: 400 }),
@@ -538,17 +499,13 @@ describe("msteams signin invoke handler registration", () => {
     ]);
     const { sso, tokenStore } = createSsoDeps({ fetchImpl });
     const deps = createDepsWithoutSso({ sso });
-    const { handler } = createActivityHandler();
-    const registered = registerMSTeamsHandlers(handler, deps) as MSTeamsActivityHandler & {
-      run: NonNullable<MSTeamsActivityHandler["run"]>;
-    };
 
     const ctx = createSigninInvokeContext({
       name: "signin/verifyState",
       value: { state: "112233" },
     });
 
-    await registered.run(ctx);
+    await runMSTeamsSigninInvokeHandler(ctx, deps);
 
     expect(deps.log.info).toHaveBeenCalledWith(
       "msteams sso verifyState succeeded",

@@ -132,9 +132,9 @@ async function handleMSTeamsFileConsentInvoke(
 
 /**
  * Run the file-consent invoke handler. The HTTP 200 InvokeResponse is sent by
- * the SDK once this returns (see `app.process.js` — a void/undefined return
- * from a typed `app.on("file.consent.accept|decline")` handler is wrapped to
- * `{ status: 200 }`), so this function intentionally does not ack itself.
+ * the SDK once this returns — a void/undefined return from a typed
+ * `app.on("file.consent.accept|decline")` handler is wrapped to
+ * `{ status: 200 }`, so this function intentionally does not ack itself.
  */
 export async function runMSTeamsFileConsentInvokeHandler(
   context: MSTeamsTurnContext,

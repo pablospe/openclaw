@@ -13,6 +13,7 @@ import type { MSTeamsConversationStore } from "./conversation-store.js";
 import { formatUnknownError } from "./errors.js";
 import { runMSTeamsFileConsentInvokeHandler } from "./file-consent-invoke.js";
 import { registerMSTeamsHandlers, type MSTeamsActivityHandler } from "./monitor-handler.js";
+import type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
 import {
   createMSTeamsPollStoreFs,
   extractMSTeamsPollVote,
@@ -31,6 +32,7 @@ import {
   type MSTeamsApp,
   type MSTeamsCardActionResponse,
 } from "./sdk.js";
+import { runMSTeamsSigninInvokeHandler } from "./signin-invoke.js";
 import { createMSTeamsSsoTokenStoreFs } from "./sso-token-store.js";
 import type { MSTeamsSsoDeps } from "./sso.js";
 import { resolveMSTeamsCredentials } from "./token.js";
@@ -337,7 +339,7 @@ export async function monitorMSTeamsProvider(
   // existing dispatch handlers on it. The SDK's App routes all inbound
   // activities to our handler via app.on('activity', ...).
   const handler = buildActivityHandler();
-  registerMSTeamsHandlers(handler, {
+  const handlerDeps: MSTeamsMessageHandlerDeps = {
     cfg,
     runtime,
     appId,
@@ -349,7 +351,8 @@ export async function monitorMSTeamsProvider(
     pollStore,
     log,
     sso: ssoDeps,
-  });
+  };
+  registerMSTeamsHandlers(handler, handlerDeps);
 
   // Handle adaptiveCard/action invokes (Action.Execute Universal Action Model).
   // We must return an InvokeResponse-shaped value so Teams updates the card UI;
@@ -432,6 +435,22 @@ export async function monitorMSTeamsProvider(
     await runMSTeamsFileConsentInvokeHandler(adaptSdkContext(ctx, app), log);
   });
 
+  // SSO sign-in invokes. Registering these as user routes replaces the
+  // SDK's built-in `signin.token-exchange` / `signin.verify-state` system
+  // defaults — the SDK's router removes a default when a user route shares
+  // its name. The SDK defaults would otherwise call
+  // `api.users.token.exchange` themselves and emit a `signin` event that
+  // nobody currently subscribes to. Our handler runs alone, persists the
+  // token via `MSTeamsSsoTokenStore`, and the SDK wraps the void return
+  // into the HTTP 200 InvokeResponse. The legacy
+  // `ctx.sendActivity({ type: "invokeResponse", … })` ack is gone.
+  app.on("signin.token-exchange", async (ctx) => {
+    await runMSTeamsSigninInvokeHandler(adaptSdkContext(ctx, app), handlerDeps);
+  });
+  app.on("signin.verify-state", async (ctx) => {
+    await runMSTeamsSigninInvokeHandler(adaptSdkContext(ctx, app), handlerDeps);
+  });
+
   // Catch all inbound activities from the SDK and delegate to our existing
   // handler dispatch system. The SDK has already validated JWT and parsed the
   // activity by this point.
@@ -445,6 +464,9 @@ export async function monitorMSTeamsProvider(
           return;
         }
         if (activity?.name === "fileConsent/invoke") {
+          return;
+        }
+        if (activity?.name === "signin/tokenExchange" || activity?.name === "signin/verifyState") {
           return;
         }
       }
