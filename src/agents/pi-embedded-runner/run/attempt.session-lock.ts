@@ -123,6 +123,51 @@ type SessionFileFingerprint =
       ctimeNs: bigint;
     };
 
+function readEntryRole(entry: unknown): string | undefined {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const topLevelRole = (entry as { role?: unknown }).role;
+  if (typeof topLevelRole === "string") {
+    return topLevelRole;
+  }
+  const message = (entry as { message?: unknown }).message;
+  return message && typeof message === "object"
+    ? ((message as { role?: unknown }).role as string | undefined)
+    : undefined;
+}
+
+function isAssistantTranscriptEntry(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return true;
+  }
+  try {
+    return readEntryRole(JSON.parse(trimmed)) === "assistant";
+  } catch {
+    return false;
+  }
+}
+
+async function readSessionFileRange(params: {
+  sessionFile: string;
+  start: bigint;
+  end: bigint;
+}): Promise<string> {
+  const length = params.end - params.start;
+  if (length <= 0n || length > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return "";
+  }
+  const handle = await fs.open(params.sessionFile, "r");
+  try {
+    const buffer = Buffer.alloc(Number(length));
+    await handle.read(buffer, 0, buffer.length, Number(params.start));
+    return buffer.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 function sameSessionFileFingerprint(
   left: SessionFileFingerprint | undefined,
   right: SessionFileFingerprint,
@@ -140,6 +185,29 @@ function sameSessionFileFingerprint(
     left.mtimeNs === right.mtimeNs &&
     left.ctimeNs === right.ctimeNs
   );
+}
+
+async function changeLooksLikeOwnedPromptOutput(params: {
+  sessionFile: string;
+  previous: SessionFileFingerprint | undefined;
+  current: SessionFileFingerprint;
+}): Promise<boolean> {
+  if (
+    !params.previous?.exists ||
+    !params.current.exists ||
+    params.current.size < params.previous.size
+  ) {
+    return false;
+  }
+  if (params.current.size === params.previous.size) {
+    return sameSessionFileFingerprint(params.previous, params.current);
+  }
+  const appended = await readSessionFileRange({
+    sessionFile: params.sessionFile,
+    start: params.previous.size,
+    end: params.current.size,
+  });
+  return appended.split(/\r?\n/u).every(isAssistantTranscriptEntry);
 }
 
 async function readSessionFileFingerprint(sessionFile: string): Promise<SessionFileFingerprint> {
@@ -357,6 +425,17 @@ export async function createEmbeddedAttemptSessionLockController(params: {
     }
     const current = await readSessionFileFingerprint(params.lockOptions.sessionFile);
     if (!sameSessionFileFingerprint(fenceFingerprint, current)) {
+      if (
+        current.exists &&
+        (await changeLooksLikeOwnedPromptOutput({
+          sessionFile: params.lockOptions.sessionFile,
+          previous: fenceFingerprint,
+          current,
+        }))
+      ) {
+        fenceFingerprint = current;
+        return;
+      }
       takeoverDetected = true;
       throw new EmbeddedAttemptSessionTakeoverError(params.lockOptions.sessionFile);
     }

@@ -239,6 +239,26 @@ describe("embedded attempt session lock lifecycle", () => {
     expect(release).toHaveBeenCalledTimes(4);
   });
 
+  it("allows append-only assistant output written by the active prompt", async () => {
+    const sessionFile = await createTempSessionFile();
+    const release = vi.fn(async () => {});
+    const acquireSessionWriteLock = vi.fn(async () => ({ release }));
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions: { ...lockOptions, sessionFile },
+    });
+
+    await controller.releaseForPrompt();
+    await fs.appendFile(
+      sessionFile,
+      '{"type":"message","message":{"role":"assistant","content":"partial"}}\n',
+      "utf8",
+    );
+
+    await expect(controller.withSessionWriteLock(() => "finalize")).resolves.toBe("finalize");
+    expect(controller.hasSessionTakeover()).toBe(false);
+  });
+
   it("refreshes the prompt fence after an owned transcript mirror append", async () => {
     const sessionFile = await createTempSessionFile();
     const release = vi.fn(async () => {});
