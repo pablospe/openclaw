@@ -6,6 +6,8 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
+- Maintainers: clarify that config/default `reviewMetrics` should include the count and direction of changed surfaces and why those changes affect review risk. (#86295)
+
 ### Fixes
 
 - Scripts: build CLI startup artifacts before the gateway CPU startup bench so fresh Linux runners do not report false `n/a` readiness and process metrics.
