@@ -1,16 +1,19 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { estimateMessagesTokens } from "../../agents/compaction.js";
 import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import { ensureSelectedAgentHarnessPlugin } from "../../agents/harness/runtime-plugin.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
-import { listLegacyRuntimeModelProviderAliases } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveContextConfigProviderForRuntime } from "../../agents/openai-codex-routing.js";
+import type { AgentMessage } from "../../agents/runtime/index.js";
 import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
+import {
+  resolveContextConfigProviderForSessionRuntime,
+  resolveSessionRuntimeOverrideForProvider,
+} from "../../agents/session-runtime-compat.js";
 import {
   derivePromptTokens,
   hasNonzeroUsage,
@@ -34,10 +37,7 @@ import { isAbortError } from "../../infra/unhandled-rejections.js";
 import { resolveMemoryFlushPlan } from "../../plugins/memory-state.js";
 import { CommandLane } from "../../process/lanes.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
-import {
-  normalizeLowercaseStringOrEmpty,
-  normalizeOptionalString,
-} from "../../shared/string-coerce.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
@@ -49,7 +49,6 @@ import {
   hasAlreadyFlushedForCurrentCompaction,
   resolveMaxActiveTranscriptBytes,
   resolveMemoryFlushContextWindowTokens,
-  resolveResponsesServerCompactionThreshold,
   shouldRunMemoryFlush,
   shouldRunPreflightCompaction,
 } from "./memory-flush.js";
@@ -59,32 +58,32 @@ import { isRenderablePayload } from "./reply-payloads-base.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import { incrementCompactionCount } from "./session-updates.js";
 
-type PiEmbeddedRuntime = typeof import("../../agents/pi-embedded.js");
+type EmbeddedAgentRuntime = typeof import("../../agents/embedded-agent.js");
 
 const MAX_VISIBLE_MEMORY_FLUSH_ERROR_CHARS = 600;
 
-const piEmbeddedRuntimeLoader = createLazyImportLoader<PiEmbeddedRuntime>(
-  () => import("../../agents/pi-embedded.js"),
+const embeddedAgentRuntimeLoader = createLazyImportLoader<EmbeddedAgentRuntime>(
+  () => import("../../agents/embedded-agent.js"),
 );
 
-function loadPiEmbeddedRuntime(): Promise<PiEmbeddedRuntime> {
-  return piEmbeddedRuntimeLoader.load();
+function loadEmbeddedAgentRuntime(): Promise<EmbeddedAgentRuntime> {
+  return embeddedAgentRuntimeLoader.load();
 }
 
-async function compactEmbeddedPiSessionDefault(
-  ...args: Parameters<typeof import("../../agents/pi-embedded.js").compactEmbeddedPiSession>
+async function compactEmbeddedAgentSessionDefault(
+  ...args: Parameters<typeof import("../../agents/embedded-agent.js").compactEmbeddedAgentSession>
 ): Promise<
-  Awaited<ReturnType<typeof import("../../agents/pi-embedded.js").compactEmbeddedPiSession>>
+  Awaited<ReturnType<typeof import("../../agents/embedded-agent.js").compactEmbeddedAgentSession>>
 > {
-  const { compactEmbeddedPiSession } = await loadPiEmbeddedRuntime();
-  return await compactEmbeddedPiSession(...args);
+  const { compactEmbeddedAgentSession } = await loadEmbeddedAgentRuntime();
+  return await compactEmbeddedAgentSession(...args);
 }
 
-async function runEmbeddedPiAgentDefault(
-  ...args: Parameters<typeof import("../../agents/pi-embedded.js").runEmbeddedPiAgent>
-): Promise<Awaited<ReturnType<typeof import("../../agents/pi-embedded.js").runEmbeddedPiAgent>>> {
-  const { runEmbeddedPiAgent } = await loadPiEmbeddedRuntime();
-  return await runEmbeddedPiAgent(...args);
+async function runEmbeddedAgentDefault(
+  ...args: Parameters<typeof import("../../agents/embedded-agent.js").runEmbeddedAgent>
+): Promise<Awaited<ReturnType<typeof import("../../agents/embedded-agent.js").runEmbeddedAgent>>> {
+  const { runEmbeddedAgent } = await loadEmbeddedAgentRuntime();
+  return await runEmbeddedAgent(...args);
 }
 
 async function ensureMemoryFlushTargetFile(params: {
@@ -112,11 +111,11 @@ async function ensureMemoryFlushTargetFile(params: {
 }
 
 const memoryDeps = {
-  compactEmbeddedPiSession: compactEmbeddedPiSessionDefault,
+  compactEmbeddedAgentSession: compactEmbeddedAgentSessionDefault,
   runWithModelFallback,
   ensureSelectedAgentHarnessPlugin,
-  runEmbeddedPiAgent: runEmbeddedPiAgentDefault,
   ensureMemoryFlushTargetFile,
+  runEmbeddedAgent: runEmbeddedAgentDefault,
   registerAgentRunContext,
   refreshQueuedFollowupSession,
   incrementCompactionCount,
@@ -125,21 +124,13 @@ const memoryDeps = {
   now: () => Date.now(),
 };
 
-function isRecoverableNativeHarnessBindingFailure(result: unknown): boolean {
-  if (!result || typeof result !== "object") {
-    return false;
-  }
-  const failure = (result as { failure?: { reason?: unknown } }).failure;
-  return failure?.reason === "missing_thread_binding" || failure?.reason === "stale_thread_binding";
-}
-
 export function setAgentRunnerMemoryTestDeps(overrides?: Partial<typeof memoryDeps>): void {
   Object.assign(memoryDeps, {
     runWithModelFallback,
     ensureSelectedAgentHarnessPlugin,
-    compactEmbeddedPiSession: compactEmbeddedPiSessionDefault,
-    runEmbeddedPiAgent: runEmbeddedPiAgentDefault,
     ensureMemoryFlushTargetFile,
+    compactEmbeddedAgentSession: compactEmbeddedAgentSessionDefault,
+    runEmbeddedAgent: runEmbeddedAgentDefault,
     registerAgentRunContext,
     refreshQueuedFollowupSession,
     incrementCompactionCount,
@@ -208,28 +199,6 @@ function resolveMemoryFlushModelFallbackOptions(
   };
 }
 
-function resolveMemoryFlushRuntimeOverrideForProvider(params: {
-  provider: string;
-  entry?: Pick<SessionEntry, "agentRuntimeOverride">;
-}): string | undefined {
-  const provider = normalizeLowercaseStringOrEmpty(params.provider);
-  const runtime = normalizeLowercaseStringOrEmpty(params.entry?.agentRuntimeOverride);
-  if (!runtime || runtime === "auto" || runtime === "default") {
-    return undefined;
-  }
-  if (runtime === "pi") {
-    return "pi";
-  }
-  if (provider === "openai" && runtime === "codex") {
-    return "codex";
-  }
-  return listLegacyRuntimeModelProviderAliases().find(
-    (alias) =>
-      normalizeLowercaseStringOrEmpty(alias.provider) === provider &&
-      normalizeLowercaseStringOrEmpty(alias.runtime) === runtime,
-  )?.runtime;
-}
-
 function resolveFollowupContextConfigProvider(params: {
   cfg: OpenClawConfig;
   followupRun: FollowupRun;
@@ -238,37 +207,19 @@ function resolveFollowupContextConfigProvider(params: {
   runtimePolicySessionKey?: string;
 }): string {
   const provider = params.followupRun.run.provider;
-  return resolveContextConfigProviderForRuntime({
-    provider,
-    runtimeId: resolveFollowupAgentRuntimeId(params),
-  });
-}
-
-function resolveFollowupAgentRuntimeId(params: {
-  cfg: OpenClawConfig;
-  followupRun: FollowupRun;
-  sessionEntry?: SessionEntry;
-  sessionKey?: string;
-  runtimePolicySessionKey?: string;
-}): string {
   const matchingSessionEntry =
     params.sessionEntry?.sessionId === params.followupRun.run.sessionId
       ? params.sessionEntry
       : undefined;
-  const persistedRuntimeOverride = normalizeOptionalString(
-    matchingSessionEntry?.agentRuntimeOverride,
-  );
-  const persistedRuntimeId =
-    persistedRuntimeOverride &&
-    persistedRuntimeOverride !== "auto" &&
-    persistedRuntimeOverride !== "default"
-      ? persistedRuntimeOverride
-      : matchingSessionEntry?.agentHarnessId;
-  if (persistedRuntimeId) {
-    return persistedRuntimeId;
+  const sessionRuntimeProvider = resolveContextConfigProviderForSessionRuntime({
+    provider,
+    entry: matchingSessionEntry,
+  });
+  if (sessionRuntimeProvider) {
+    return sessionRuntimeProvider;
   }
   const harnessPolicy = resolveAgentHarnessPolicy({
-    provider: params.followupRun.run.provider,
+    provider,
     modelId: params.followupRun.run.model,
     config: params.cfg,
     agentId: params.followupRun.run.agentId,
@@ -278,17 +229,10 @@ function resolveFollowupAgentRuntimeId(params: {
       params.followupRun.run.runtimePolicySessionKey ??
       params.followupRun.run.sessionKey,
   });
-  return harnessPolicy.runtime;
-}
-
-function followupUsesCodexRuntime(params: {
-  cfg: OpenClawConfig;
-  followupRun: FollowupRun;
-  sessionEntry?: SessionEntry;
-  sessionKey?: string;
-  runtimePolicySessionKey?: string;
-}): boolean {
-  return normalizeLowercaseStringOrEmpty(resolveFollowupAgentRuntimeId(params)) === "codex";
+  return resolveContextConfigProviderForRuntime({
+    provider,
+    runtimeId: harnessPolicy.runtime,
+  });
 }
 
 function resolveVisibleMemoryFlushErrorPayloads(payloads?: ReplyPayload[]): ReplyPayload[] {
@@ -639,23 +583,6 @@ export async function runPreflightCompactionIfNeeded(params: {
   if (params.isHeartbeat || isCli) {
     return entry ?? params.sessionEntry;
   }
-  if (
-    followupUsesCodexRuntime({
-      cfg: params.cfg,
-      followupRun: params.followupRun,
-      sessionEntry: entry,
-      sessionKey: params.sessionKey,
-      runtimePolicySessionKey: params.runtimePolicySessionKey,
-    })
-  ) {
-    // Codex runtime sessions should reach Codex with their real thread state.
-    // Its harness owns automatic compaction; OpenClaw preflight compaction is
-    // only for non-Codex embedded runtimes.
-    logVerbose(
-      `preflightCompaction skipped: sessionKey=${params.sessionKey} runtime=codex reason=codex_native_auto_compaction`,
-    );
-    return entry ?? params.sessionEntry;
-  }
 
   const contextWindowTokens = resolveMemoryFlushContextWindowTokens({
     cfg: params.cfg,
@@ -736,20 +663,11 @@ export async function runPreflightCompactionIfNeeded(params: {
       ? projectedTokenCount
       : undefined;
 
-  const serverCompactionThreshold = resolveResponsesServerCompactionThreshold({
-    cfg: params.cfg,
-    provider: params.followupRun.run.provider,
-    modelId: params.followupRun.run.model ?? params.defaultModel,
-  });
-  const threshold = Math.max(
-    contextWindowTokens - reserveTokensFloor - softThresholdTokens,
-    serverCompactionThreshold ?? 0,
-  );
+  const threshold = contextWindowTokens - reserveTokensFloor - softThresholdTokens;
   logVerbose(
     `preflightCompaction check: sessionKey=${params.sessionKey} ` +
       `tokenCount=${tokenCountForCompaction ?? freshPersistedTokens ?? "undefined"} ` +
       `contextWindow=${contextWindowTokens} threshold=${threshold} ` +
-      `serverCompactionThreshold=${serverCompactionThreshold ?? "undefined"} ` +
       `isHeartbeat=${params.isHeartbeat} isCli=${isCli} ` +
       `persistedFresh=${entry?.totalTokensFresh === true} ` +
       `transcriptPromptTokens=${transcriptPromptTokens ?? "undefined"} ` +
@@ -765,7 +683,6 @@ export async function runPreflightCompactionIfNeeded(params: {
     contextWindowTokens,
     reserveTokensFloor,
     softThresholdTokens,
-    minimumThresholdTokens: serverCompactionThreshold,
   });
   const shouldCompact = shouldCompactByTokens || shouldCompactByTranscriptBytes;
   if (!shouldCompact) {
@@ -788,7 +705,7 @@ export async function runPreflightCompactionIfNeeded(params: {
     params.sessionKey ?? params.followupRun.run.sessionKey,
     { storePath: params.storePath },
   );
-  const result = await memoryDeps.compactEmbeddedPiSession({
+  const result = await memoryDeps.compactEmbeddedAgentSession({
     sessionId: entry.sessionId,
     sessionKey: params.sessionKey,
     sandboxSessionKey: params.runtimePolicySessionKey,
@@ -822,12 +739,6 @@ export async function runPreflightCompactionIfNeeded(params: {
   if (!result?.ok) {
     const reason = result?.reason ?? "not_compacted";
     logVerbose(`preflightCompaction failed: sessionKey=${params.sessionKey} reason=${reason}`);
-    if (isRecoverableNativeHarnessBindingFailure(result)) {
-      logVerbose(
-        `preflightCompaction continuing after recoverable native harness binding failure: sessionKey=${params.sessionKey} reason=${reason}`,
-      );
-      return entry ?? params.sessionEntry;
-    }
     throw new Error(`Preflight compaction required but failed: ${reason}`);
   }
 
@@ -1129,7 +1040,7 @@ export async function runMemoryFlushIfNeeded(params: {
       sessionId: activeSessionEntry?.sessionId ?? params.followupRun.run.sessionId,
       lane: CommandLane.Main,
       resolveAgentHarnessRuntimeOverride: (provider) =>
-        resolveMemoryFlushRuntimeOverrideForProvider({
+        resolveSessionRuntimeOverrideForProvider({
           provider,
           entry: activeSessionEntry,
         }),
@@ -1157,7 +1068,7 @@ export async function runMemoryFlushIfNeeded(params: {
           runId: flushRunId,
           allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
         });
-        const result = await memoryDeps.runEmbeddedPiAgent({
+        const result = await memoryDeps.runEmbeddedAgent({
           ...embeddedContext,
           ...senderContext,
           ...runBaseParams,

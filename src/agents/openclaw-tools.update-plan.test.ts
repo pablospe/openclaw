@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { setEmbeddedMode } from "../infra/embedded-mode.js";
+import { isToolWrappedWithBeforeToolCallHook } from "./agent-tools.before-tool-call.js";
 import { createOpenClawTools } from "./openclaw-tools.js";
 import {
   isUpdatePlanToolEnabledForOpenClawTools,
   shouldIncludeUpdatePlanToolForOpenClawTools,
 } from "./openclaw-tools.registration.js";
-import { isToolWrappedWithBeforeToolCallHook } from "./pi-tools.before-tool-call.js";
 import { createUpdatePlanTool } from "./tools/update-plan-tool.js";
 
 type UpdatePlanGatingParams = Parameters<typeof isUpdatePlanToolEnabledForOpenClawTools>[0];
@@ -235,7 +235,7 @@ describe("openclaw-tools update_plan gating", () => {
     const cfg = {
       agents: {
         defaults: {
-          embeddedPi: {
+          embeddedAgent: {
             executionContract: "default",
           },
         },
@@ -264,7 +264,7 @@ describe("openclaw-tools update_plan gating", () => {
     const cfg = {
       agents: {
         defaults: {
-          embeddedPi: {
+          embeddedAgent: {
             executionContract: "strict-agentic",
           },
         },
@@ -279,7 +279,7 @@ describe("openclaw-tools update_plan gating", () => {
     const cfg = {
       agents: {
         defaults: {
-          embeddedPi: {
+          embeddedAgent: {
             executionContract: "strict-agentic",
           },
         },
@@ -303,7 +303,7 @@ describe("openclaw-tools update_plan gating", () => {
       },
       agents: {
         defaults: {
-          embeddedPi: {
+          embeddedAgent: {
             executionContract: "strict-agentic",
           },
         },
@@ -318,7 +318,7 @@ describe("openclaw-tools update_plan gating", () => {
     const cfg = {
       agents: {
         defaults: {
-          embeddedPi: {
+          embeddedAgent: {
             executionContract: "default",
           },
         },
@@ -326,7 +326,7 @@ describe("openclaw-tools update_plan gating", () => {
           { id: "main" },
           {
             id: "research",
-            embeddedPi: {
+            embeddedAgent: {
               executionContract: "strict-agentic",
             },
           },
@@ -341,14 +341,14 @@ describe("openclaw-tools update_plan gating", () => {
     const cfg = {
       agents: {
         defaults: {
-          embeddedPi: {
+          embeddedAgent: {
             executionContract: "strict-agentic",
           },
         },
         list: [
           {
             id: "main",
-            embeddedPi: {
+            embeddedAgent: {
               executionContract: "default",
             },
           },

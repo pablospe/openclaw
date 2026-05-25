@@ -1,10 +1,10 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   hasNonEmptyString as hasNonEmptyStringField,
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
   readStringValue,
 } from "../shared/string-coerce.js";
+import type { AgentMessage } from "./runtime/index.js";
 import { extractToolCallsFromAssistant, extractToolResultId } from "./tool-call-id.js";
 import {
   REDACTED_SESSIONS_SPAWN_ATTACHMENT_CONTENT,
