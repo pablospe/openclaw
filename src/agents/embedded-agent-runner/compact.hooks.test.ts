@@ -480,7 +480,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       modelRegistry: {},
     }));
 
-    const result = await compactEmbeddedPiSessionDirect({
+    const result = await compactEmbeddedAgentSessionDirect({
       sessionId: "session-1",
       sessionKey: TEST_SESSION_KEY,
       sessionFile: "/tmp/session.jsonl",
@@ -517,7 +517,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       modelRegistry: {},
     }));
 
-    const result = await compactEmbeddedPiSessionDirect({
+    const result = await compactEmbeddedAgentSessionDirect({
       sessionId: "session-1",
       sessionKey: TEST_SESSION_KEY,
       sessionFile: "/tmp/session.jsonl",
@@ -548,7 +548,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       modelRegistry: {},
     }));
 
-    const result = await compactEmbeddedPiSessionDirect({
+    const result = await compactEmbeddedAgentSessionDirect({
       sessionId: "session-1",
       sessionKey: TEST_SESSION_KEY,
       sessionFile: "/tmp/session.jsonl",
