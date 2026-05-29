@@ -812,7 +812,9 @@ describe("connectCodexAppServerEndpoint", () => {
             ? Buffer.concat(data).toString("utf8")
             : typeof data === "string"
               ? data
-              : Buffer.from(data).toString("utf8");
+              : Buffer.isBuffer(data)
+                ? data.toString("utf8")
+                : Buffer.from(data).toString("utf8");
           const request = JSON.parse(payload) as Record<string, unknown>;
           if (request.method === "initialize") {
             socket.send(JSON.stringify({ id: request.id, result: {} }));

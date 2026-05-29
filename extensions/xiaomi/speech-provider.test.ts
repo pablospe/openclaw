@@ -214,7 +214,7 @@ describe("buildXiaomiSpeechProvider", () => {
       const audio = Buffer.from("fake-mp3-audio").toString("base64");
       const timeoutSpy = vi
         .spyOn(globalThis, "setTimeout")
-        .mockImplementation((() => 1) as typeof setTimeout);
+        .mockImplementation((() => 1) as unknown as typeof setTimeout);
       const clearTimeoutSpy = vi
         .spyOn(globalThis, "clearTimeout")
         .mockImplementation(() => undefined);

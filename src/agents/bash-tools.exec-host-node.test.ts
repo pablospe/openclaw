@@ -16,6 +16,21 @@ type MockAllowlistResult = {
   segments: MockAllowlistSegment[];
   segmentAllowlistEntries: unknown[];
 };
+type MockExecApprovalEntry = {
+  pattern: string;
+  source?: string;
+  commandText?: string;
+};
+type MockResolvedExecApprovals = {
+  allowlist: MockExecApprovalEntry[];
+  file: { version: number; agents: Record<string, unknown> };
+  agent: {
+    security: string;
+    ask: string;
+    askFallback: string;
+    autoAllowSkills: boolean;
+  };
+};
 
 const INLINE_EVAL_HIT = {
   executable: "python3",
@@ -54,16 +69,18 @@ const evaluateShellAllowlistMock = vi.hoisted(() =>
   ),
 );
 const resolveExecApprovalsFromFileMock = vi.hoisted(() =>
-  vi.fn(() => ({
-    allowlist: [],
-    file: { version: 1, agents: {} },
-    agent: {
-      security: "full",
-      ask: "off",
-      askFallback: "deny",
-      autoAllowSkills: false,
-    },
-  })),
+  vi.fn(
+    (): MockResolvedExecApprovals => ({
+      allowlist: [],
+      file: { version: 1, agents: {} },
+      agent: {
+        security: "full",
+        ask: "off",
+        askFallback: "deny",
+        autoAllowSkills: false,
+      },
+    }),
+  ),
 );
 const requiresExecApprovalMock = vi.hoisted(() => vi.fn(() => true));
 const hasDurableExecApprovalMock = vi.hoisted(() => vi.fn(() => false));
