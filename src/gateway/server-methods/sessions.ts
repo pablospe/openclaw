@@ -210,45 +210,69 @@ function resolveParentExpectedRuntimeSelection(
   cfg: OpenClawConfig,
   parentEntry: SessionEntry | undefined,
   agentId: string,
+  store?: Record<string, SessionEntry>,
 ): { provider: string; model: string; config: OpenClawConfig } {
-  const explicitProviderOverride = normalizeOptionalString(parentEntry?.providerOverride);
-  const explicitModelOverride = normalizeOptionalString(parentEntry?.modelOverride);
-  if (explicitProviderOverride || explicitModelOverride) {
-    return {
-      ...resolveSessionModelRef(
-        cfg,
-        {
-          providerOverride: explicitProviderOverride,
-          modelOverride: explicitModelOverride,
-        },
-        agentId,
-      ),
-      config: cfg,
-    };
-  }
-
   const defaultSelection = resolveSessionModelRef(cfg, undefined, agentId);
-  const channelModelOverride =
-    cfg.channels?.modelByChannel && parentEntry
+  const visited = new Set<string>();
+  let currentEntry = parentEntry;
+  let currentAgentId = agentId;
+
+  for (let depth = 0; currentEntry && depth < 8; depth += 1) {
+    const explicitProviderOverride = normalizeOptionalString(currentEntry.providerOverride);
+    const explicitModelOverride = normalizeOptionalString(currentEntry.modelOverride);
+    if (explicitProviderOverride || explicitModelOverride) {
+      return {
+        ...resolveSessionModelRef(
+          cfg,
+          {
+            providerOverride: explicitProviderOverride,
+            modelOverride: explicitModelOverride,
+          },
+          currentAgentId,
+        ),
+        config: cfg,
+      };
+    }
+
+    const entryDefaultSelection = resolveSessionModelRef(cfg, undefined, currentAgentId);
+    const channelModelOverride = cfg.channels?.modelByChannel
       ? resolveChannelModelOverride({
           cfg,
-          channel: parentEntry.channel ?? parentEntry.origin?.provider ?? parentEntry.lastChannel,
-          groupId: parentEntry.groupId,
-          groupChatType: parentEntry.chatType,
-          groupChannel: parentEntry.groupChannel,
-          groupSubject: parentEntry.subject,
-          parentSessionKey: parentEntry.parentSessionKey,
+          channel:
+            currentEntry.channel ?? currentEntry.origin?.provider ?? currentEntry.lastChannel,
+          groupId: currentEntry.groupId,
+          groupChatType: currentEntry.chatType,
+          groupChannel: currentEntry.groupChannel,
+          groupSubject: currentEntry.subject,
+          parentSessionKey: currentEntry.parentSessionKey,
         })
       : null;
-  const channelSelection = channelModelOverride
-    ? resolveModelRefFromString({
-        cfg,
-        raw: channelModelOverride.model,
-        defaultProvider: defaultSelection.provider,
-      })?.ref
-    : null;
+    const channelSelection = channelModelOverride
+      ? resolveModelRefFromString({
+          cfg,
+          raw: channelModelOverride.model,
+          defaultProvider: entryDefaultSelection.provider,
+        })?.ref
+      : null;
+    if (channelSelection) {
+      return {
+        ...channelSelection,
+        config: cfg,
+      };
+    }
+
+    const parentKey = normalizeOptionalString(currentEntry.parentSessionKey);
+    if (!parentKey || !store || visited.has(parentKey)) {
+      break;
+    }
+    visited.add(parentKey);
+    const parentStoreKey = resolveSessionStoreKey({ cfg, sessionKey: parentKey });
+    currentEntry = store[parentStoreKey] ?? store[parentKey];
+    currentAgentId = normalizeAgentId(resolveAgentIdFromSessionKey(parentStoreKey) ?? agentId);
+  }
+
   return {
-    ...(channelSelection ?? defaultSelection),
+    ...defaultSelection,
     config: cfg,
   };
 }
@@ -1660,6 +1684,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
               cfg,
               parentSessionEntry,
               parentAgentId ?? targetAgentId,
+              store,
             ),
           );
       const nextEntry: SessionEntry = {

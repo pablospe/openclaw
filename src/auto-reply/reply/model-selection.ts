@@ -246,7 +246,7 @@ export async function createModelSelectionState(params: {
     parentSessionKey,
     defaultProvider,
   });
-  const staleAutoRuntimeAuthProfileExpectedSelection =
+  const preliminaryAutoRuntimeAuthProfileExpectedSelection =
     params.skipStoredModelOverride !== true &&
     params.hasResolvedHeartbeatModelOverride !== true &&
     storedOverride?.model
@@ -258,11 +258,11 @@ export async function createModelSelectionState(params: {
           provider: primaryProvider,
           model: primaryModel,
         };
-  const staleAutoRuntimeAuthProfileSelection =
+  const preliminaryStaleAutoRuntimeAuthProfileSelection =
     params.skipStoredModelOverride !== true &&
     hasStaleAutoRuntimeAuthProfileSelection(sessionEntry, {
-      provider: staleAutoRuntimeAuthProfileExpectedSelection.provider,
-      model: staleAutoRuntimeAuthProfileExpectedSelection.model,
+      provider: preliminaryAutoRuntimeAuthProfileExpectedSelection.provider,
+      model: preliminaryAutoRuntimeAuthProfileExpectedSelection.model,
       config: cfg,
     });
 
@@ -343,9 +343,9 @@ export async function createModelSelectionState(params: {
       model = primaryModel;
     }
   }
-  if (staleAutoRuntimeAuthProfileSelection && !params.hasModelDirective) {
-    provider = staleAutoRuntimeAuthProfileExpectedSelection.provider;
-    model = staleAutoRuntimeAuthProfileExpectedSelection.model;
+  if (preliminaryStaleAutoRuntimeAuthProfileSelection && !params.hasModelDirective) {
+    provider = preliminaryAutoRuntimeAuthProfileExpectedSelection.provider;
+    model = preliminaryAutoRuntimeAuthProfileExpectedSelection.model;
   }
   // Skip stored session model override only when an explicit heartbeat.model
   // was resolved. Heartbeats without heartbeat.model still inherit normal
@@ -382,12 +382,20 @@ export async function createModelSelectionState(params: {
     model = allowedInitialSelection.model;
   }
 
+  const staleAutoRuntimeAuthProfileSelection =
+    params.skipStoredModelOverride !== true &&
+    hasStaleAutoRuntimeAuthProfileSelection(sessionEntry, {
+      provider,
+      model,
+      config: cfg,
+    });
+
   if (staleAutoRuntimeAuthProfileSelection && sessionEntry && sessionStore && sessionKey) {
     const runtimeProvider = sessionEntry.modelProvider;
     const runtimeModel = sessionEntry.model;
     const { updated } = clearStaleAutoRuntimeAuthProfileSelection(sessionEntry, {
-      provider: staleAutoRuntimeAuthProfileExpectedSelection.provider,
-      model: staleAutoRuntimeAuthProfileExpectedSelection.model,
+      provider,
+      model,
       config: cfg,
     });
     if (updated) {

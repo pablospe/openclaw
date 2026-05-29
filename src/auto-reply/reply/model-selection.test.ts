@@ -1420,6 +1420,76 @@ describe("createModelSelectionState auto-failover overrides", () => {
     expect(sessionStore[sessionKey]?.authProfileOverrideSource).toBe("auto");
   });
 
+  it("repairs auto auth state when an inherited parent override is no longer allowed", async () => {
+    authProfileStoreMock.store = {
+      version: 1,
+      profiles: {
+        "anthropic:work": {
+          type: "api_key",
+          provider: "anthropic",
+          key: "old-key",
+        },
+        "minimax:global": {
+          type: "api_key",
+          provider: "minimax",
+          key: "primary-key",
+        },
+      },
+    };
+    const parentSessionKey = "agent:main:telegram:direct:parent";
+    const sessionEntry = makeEntry({
+      parentSessionKey,
+      modelProvider: "anthropic",
+      model: "claude-opus-4-6",
+      contextTokens: 200_000,
+      authProfileOverride: "anthropic:work",
+      authProfileOverrideSource: "auto",
+    });
+    const sessionStore = {
+      [sessionKey]: sessionEntry,
+      [parentSessionKey]: makeEntry({
+        providerOverride: "anthropic",
+        modelOverride: "claude-opus-4-6",
+        modelOverrideSource: "user",
+      }),
+    };
+    const cfg = {
+      agents: {
+        defaults: {
+          models: {
+            "minimax/MiniMax-M2.7": {},
+          },
+        },
+      },
+    } as OpenClawConfig;
+    const agentCfg = cfg.agents?.defaults;
+
+    const state = await createModelSelectionState({
+      cfg,
+      agentCfg,
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      parentSessionKey,
+      defaultProvider: "minimax",
+      defaultModel: "MiniMax-M2.7",
+      primaryProvider: "minimax",
+      primaryModel: "MiniMax-M2.7",
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      hasModelDirective: false,
+    });
+
+    expect(state.provider).toBe("minimax");
+    expect(state.model).toBe("MiniMax-M2.7");
+    expect(state.resetModelOverride).toBe(true);
+    expect(state.resetModelOverrideRef).toBe("anthropic/claude-opus-4-6");
+    expect(sessionStore[sessionKey]?.modelProvider).toBeUndefined();
+    expect(sessionStore[sessionKey]?.model).toBeUndefined();
+    expect(sessionStore[sessionKey]?.contextTokens).toBeUndefined();
+    expect(sessionStore[sessionKey]?.authProfileOverride).toBeUndefined();
+  });
+
   it("preserves runtime-equivalent OpenAI Codex auto auth selections", async () => {
     authProfileStoreMock.store = {
       version: 1,
