@@ -26,6 +26,8 @@ export type ChannelBotLoopProtectionFacts = {
   nowMs?: number;
 };
 
+// One process-local guard is shared across channel turns; scopeId keeps accounts/conversations
+// isolated while periodic pruning prevents stale pairs from growing for the gateway lifetime.
 const channelBotPairLoopGuard = createPairLoopGuard({ pruneIntervalMs: 60_000 });
 
 /** Records a bot pair interaction and returns whether the loop guard should suppress it. */

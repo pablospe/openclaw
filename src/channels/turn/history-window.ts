@@ -73,6 +73,8 @@ export function createChannelHistoryWindow<T extends HistoryEntry = HistoryEntry
         historyKey: contextParams.historyKey,
         limit: contextParams.limit,
         currentMessage: contextParams.currentMessage,
+        // The shared renderer is HistoryEntry-based; this facade keeps adapter-specific entry
+        // subtypes local while handing the renderer the common fields it actually consumes.
         formatEntry: contextParams.formatEntry as (entry: HistoryEntry) => string,
         lineBreak: contextParams.lineBreak,
       }),
