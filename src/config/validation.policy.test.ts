@@ -69,12 +69,36 @@ describe("gateway memory watch config warnings", () => {
   it("does not warn when gateway memory watching is disabled explicitly", () => {
     const result = validateConfigObjectWithPlugins(
       {
-        gateway: { mode: "remote" },
+        gateway: { mode: "local" },
         agents: {
           defaults: {
             memorySearch: {
               extraPaths: ["/srv/shared-notes"],
               sync: { watch: false },
+            },
+          },
+        },
+      },
+      { pluginValidation: "skip" },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).not.toContainEqual(
+      expect.objectContaining({
+        path: "agents.defaults.memorySearch.sync.watch",
+      }),
+    );
+  });
+
+  it("does not warn for remote client configs", () => {
+    const result = validateConfigObjectWithPlugins(
+      {
+        gateway: { mode: "remote", remote: { url: "wss://gateway.example/ws" } },
+        agents: {
+          defaults: {
+            memorySearch: {
+              extraPaths: ["/srv/shared-notes"],
+              sync: { watch: true },
             },
           },
         },

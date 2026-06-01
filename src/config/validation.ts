@@ -872,8 +872,8 @@ function validateGatewayTailscaleAuth(config: OpenClawConfig): ConfigValidationI
   ];
 }
 
-function isGatewayMode(config: OpenClawConfig): boolean {
-  return config.gateway?.mode === "local" || config.gateway?.mode === "remote";
+function isLocalGatewayMode(config: OpenClawConfig): boolean {
+  return config.gateway?.mode === "local";
 }
 
 function isMemorySearchEnabled(
@@ -922,7 +922,7 @@ function memoryWatchFdPressureWarningMessage(): string {
 }
 
 function collectGatewayMemoryWatchWarnings(config: OpenClawConfig): ConfigValidationIssue[] {
-  if (!isGatewayMode(config)) {
+  if (!isLocalGatewayMode(config)) {
     return [];
   }
   const defaults = config.agents?.defaults?.memorySearch;
