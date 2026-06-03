@@ -394,6 +394,103 @@ describe("Codex app-server approval bridge", () => {
     },
   );
 
+  it.each([
+    {
+      name: "provider base URL",
+      reviewerModel: "openai/gpt-5.5-mini",
+      models: {
+        providers: {
+          openai: {
+            baseUrl: "http://127.0.0.1:11434/v1",
+            models: [],
+          },
+        },
+      },
+    },
+    {
+      name: "provider local service",
+      reviewerModel: "openai/gpt-5.5-mini",
+      models: {
+        providers: {
+          openai: {
+            baseUrl: "https://api.openai.com/v1",
+            localService: { command: "local-openai-compatible" },
+            models: [],
+          },
+        },
+      },
+    },
+    {
+      name: "model base URL",
+      reviewerModel: "openai/gpt-5.5-mini@work",
+      models: {
+        providers: {
+          openai: {
+            baseUrl: "https://api.openai.com/v1",
+            models: [
+              {
+                id: "gpt-5.5-mini",
+                name: "Local GPT-compatible reviewer",
+                baseUrl: "http://localhost:8080/v1",
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 128_000,
+                maxTokens: 8_192,
+              },
+            ],
+          },
+        },
+      },
+    },
+  ])(
+    "falls back to plugin approval for OpenAI reviewer with custom $name",
+    async ({ models, reviewerModel }) => {
+      const params = createParams();
+      params.config = {
+        tools: {
+          exec: {
+            mode: "auto",
+            reviewer: {
+              model: reviewerModel,
+            },
+          },
+        },
+        models,
+      } as EmbeddedRunAttemptParams["config"];
+      mockReviewExecRequestWithConfiguredModel.mockResolvedValueOnce({
+        decision: "allow-once",
+        rationale: "custom endpoint reviewer",
+        risk: "low",
+      });
+      mockCallGatewayTool
+        .mockResolvedValueOnce({ id: "plugin:approval-custom-openai", status: "accepted" })
+        .mockResolvedValueOnce({ id: "plugin:approval-custom-openai", decision: "allow-once" });
+
+      const result = await handleCodexAppServerApprovalRequest({
+        method: "item/commandExecution/requestApproval",
+        requestParams: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "cmd-auto-review-custom-openai",
+          command: "node --version",
+        },
+        paramsForRun: params,
+        threadId: "thread-1",
+        turnId: "turn-1",
+        execPolicy: { mode: "auto" },
+        internalExecAutoReview: true,
+      });
+
+      expect(result).toEqual({ decision: "accept" });
+      expect(mockReviewExecRequestWithConfiguredModel).not.toHaveBeenCalled();
+      expect(mockCallGatewayTool.mock.calls.map(([method]) => method)).toEqual([
+        "plugin.approval.request",
+        "plugin.approval.waitDecision",
+      ]);
+    },
+  );
+
   it("keeps permission amendment command approvals on the plugin approval route", async () => {
     const params = createParams();
     params.config = {

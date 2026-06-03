@@ -395,7 +395,7 @@ async function runInternalExecAutoReviewForApprovalRequest(params: {
     return undefined;
   }
   const reviewerConfig = resolveExecReviewerConfig(params.paramsForRun, params.agentId);
-  if (!canUseInternalExecAutoReviewReviewer(reviewerConfig)) {
+  if (!canUseInternalExecAutoReviewReviewer(reviewerConfig, params.paramsForRun.config)) {
     return undefined;
   }
   const decision = await waitForInternalExecAutoReviewDecision({
@@ -505,13 +505,21 @@ function resolveExecReviewerConfig(
 
 function canUseInternalExecAutoReviewReviewer(
   reviewerConfig: Record<string, unknown> | undefined,
+  config: EmbeddedRunAttemptParams["config"] | undefined,
 ): boolean {
   const model = readExecReviewerModelRef(reviewerConfig);
   const slashIndex = model?.indexOf("/") ?? -1;
   if (!model || slashIndex <= 0) {
     return false;
   }
-  return model.slice(0, slashIndex).trim().toLowerCase() === "openai";
+  const provider = model.slice(0, slashIndex).trim().toLowerCase();
+  if (provider !== "openai") {
+    return false;
+  }
+  return configuredOpenAIProviderIsTrustedForExecReview({
+    config,
+    modelId: model.slice(slashIndex + 1).trim(),
+  });
 }
 
 function readExecReviewerModelRef(
@@ -523,6 +531,58 @@ function readExecReviewerModelRef(
   }
   const primary = readUnknownRecord(model)?.primary;
   return typeof primary === "string" && primary.trim() ? primary.trim() : undefined;
+}
+
+function configuredOpenAIProviderIsTrustedForExecReview(params: {
+  config: EmbeddedRunAttemptParams["config"] | undefined;
+  modelId: string;
+}): boolean {
+  const providers = readUnknownRecord(readUnknownRecord(params.config)?.models)?.providers;
+  const openAIProvider = readUnknownRecord(readUnknownRecord(providers)?.openai);
+  if (!openAIProvider) {
+    return true;
+  }
+  if (readUnknownRecord(openAIProvider.localService)) {
+    return false;
+  }
+  if (!isNativeOpenAIBaseUrl(openAIProvider.baseUrl)) {
+    return false;
+  }
+  const models = openAIProvider.models;
+  if (!Array.isArray(models)) {
+    return true;
+  }
+  const modelId = params.modelId.trim();
+  if (!modelId) {
+    return false;
+  }
+  for (const entry of models) {
+    const model = readUnknownRecord(entry);
+    if (typeof model?.id !== "string" || !matchesConfiguredOpenAIModelId(modelId, model.id)) {
+      continue;
+    }
+    if (!isNativeOpenAIBaseUrl(model.baseUrl)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function matchesConfiguredOpenAIModelId(modelId: string, configuredModelId: string): boolean {
+  const configured = configuredModelId.trim();
+  return Boolean(configured) && (modelId === configured || modelId.startsWith(`${configured}@`));
+}
+
+function isNativeOpenAIBaseUrl(value: unknown): boolean {
+  if (typeof value !== "string" || !value.trim()) {
+    return true;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname.toLowerCase() === "api.openai.com";
+  } catch {
+    return false;
+  }
 }
 
 function resolveAgentExecConfig(
