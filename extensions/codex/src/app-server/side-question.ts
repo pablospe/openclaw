@@ -173,6 +173,7 @@ export async function runCodexAppServerSideQuestion(
     }) ??
     resolveCodexBindingModelProviderFallback({
       currentModel: params.model,
+      bindingModel: binding.model,
       bindingModelProvider: binding.modelProvider,
     });
   const reviewerPolicyContext = resolveCodexModelBackedReviewerPolicyContext({

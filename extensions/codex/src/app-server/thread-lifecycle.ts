@@ -350,6 +350,7 @@ export async function startOrResumeThread(params: {
       }) ??
       resolveCodexBindingModelProviderFallback({
         currentModel: params.params.modelId,
+        bindingModel: binding.model,
         bindingModelProvider: binding.modelProvider,
       });
   }
@@ -986,9 +987,20 @@ export function buildThreadResumeParams(
 
 export function resolveCodexBindingModelProviderFallback(params: {
   currentModel: string | undefined;
+  bindingModel: string | undefined;
   bindingModelProvider: string | undefined;
 }): string | undefined {
-  return hasProviderQualifiedModelRef(params.currentModel) ? undefined : params.bindingModelProvider;
+  const currentModel = params.currentModel?.trim();
+  const bindingModel = params.bindingModel?.trim();
+  if (
+    currentModel &&
+    bindingModel &&
+    currentModel === bindingModel &&
+    params.bindingModelProvider
+  ) {
+    return params.bindingModelProvider;
+  }
+  return hasProviderQualifiedModelRef(currentModel) ? undefined : params.bindingModelProvider;
 }
 
 function hasProviderQualifiedModelRef(model: string | undefined): boolean {

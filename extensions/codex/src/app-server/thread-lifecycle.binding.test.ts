@@ -345,6 +345,49 @@ describe("Codex app-server thread lifecycle bindings", () => {
     expect(binding.modelProvider).toBe("lmstudio");
   });
 
+  it("keeps the bound local provider when the bound model id contains a slash", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    await writeCodexAppServerBinding(sessionFile, {
+      threadId: "thread-existing",
+      cwd: workspaceDir,
+      model: "openai/gpt-oss-20b",
+      modelProvider: "lmstudio",
+      dynamicToolsFingerprint: "[]",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+    });
+    const params = createParams(sessionFile, workspaceDir);
+    params.provider = "codex";
+    params.modelId = "openai/gpt-oss-20b";
+    const appServer = createThreadLifecycleAppServerOptions();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/resume") {
+        const response = threadStartResult("thread-existing");
+        response.model = "openai/gpt-oss-20b";
+        response.modelProvider = "lmstudio";
+        response.thread.modelProvider = "lmstudio";
+        return response;
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const binding = await startOrResumeThread({
+      client: { request } as never,
+      params,
+      cwd: workspaceDir,
+      dynamicTools: [],
+      appServer,
+    });
+
+    const resumeParams = request.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(request.mock.calls.map(([method]) => method)).toEqual(["thread/resume"]);
+    expect(resumeParams?.model).toBe("openai/gpt-oss-20b");
+    expect(resumeParams?.modelProvider).toBe("lmstudio");
+    expect(binding.threadId).toBe("thread-existing");
+    expect(binding.modelProvider).toBe("lmstudio");
+  });
+
   it("starts a fresh Codex thread when dynamic tools switch from deferred to direct", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");

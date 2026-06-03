@@ -159,6 +159,7 @@ export async function setCodexConversationModel(params: {
   });
   const modelProvider = resolveConversationControlModelProvider({
     authProfileId: binding.authProfileId,
+    bindingModel: binding.model,
     bindingModelProvider: binding.modelProvider,
     currentModel: model,
     ...lookup,
@@ -337,6 +338,7 @@ function buildBindingLookup(params: {
 
 function resolveConversationControlModelProvider(params: {
   authProfileId?: string;
+  bindingModel?: string;
   bindingModelProvider?: string;
   currentModel?: string;
   agentDir?: string;
@@ -344,6 +346,7 @@ function resolveConversationControlModelProvider(params: {
 }): string | undefined {
   const modelProvider = resolveCodexBindingModelProviderFallback({
     currentModel: params.currentModel,
+    bindingModel: params.bindingModel,
     bindingModelProvider: params.bindingModelProvider,
   })?.trim();
   if (!modelProvider || modelProvider.toLowerCase() === "codex") {

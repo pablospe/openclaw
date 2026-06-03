@@ -931,6 +931,46 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(config?.["features.code_mode_only"]).toBe(true);
   });
 
+  it("uses bound local providers for side-thread model ids that contain slashes", async () => {
+    const client = createFakeClient();
+    getSharedCodexAppServerClientMock.mockResolvedValue(client);
+    readCodexAppServerBindingMock.mockResolvedValue({
+      schemaVersion: 1,
+      threadId: "parent-thread",
+      sessionFile: "/tmp/session-1.jsonl",
+      cwd: "/tmp/workspace",
+      authProfileId: "openai:work",
+      model: "openai/gpt-oss-20b",
+      modelProvider: "lmstudio",
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    });
+
+    await expect(
+      runCodexAppServerSideQuestion(
+        sideParams({
+          provider: "codex",
+          model: "openai/gpt-oss-20b",
+        }),
+        {
+          pluginConfig: {
+            appServer: {
+              mode: "guardian",
+              codeModeOnly: true,
+            },
+          },
+        },
+      ),
+    ).resolves.toEqual({ text: "Side answer." });
+
+    const forkParams = mockCall(client.request)[1] as Record<string, unknown> | undefined;
+    expect(forkParams?.model).toBe("openai/gpt-oss-20b");
+    expect(forkParams?.modelProvider).toBe("lmstudio");
+    expect(forkParams?.approvalsReviewer).toBe("user");
+  });
+
   it("does not apply bound local model providers to provider-qualified side-thread models", async () => {
     const client = createFakeClient();
     getSharedCodexAppServerClientMock.mockResolvedValue(client);
