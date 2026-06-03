@@ -1,0 +1,73 @@
+import { describe, expect, it } from "vitest";
+import { runCronCommandJob } from "./command-runner.js";
+import type { CronJob } from "./types.js";
+
+function makeCommandJob(payload: Extract<CronJob["payload"], { kind: "command" }>): CronJob {
+  const now = Date.now();
+  return {
+    id: "command-job",
+    name: "Command job",
+    enabled: true,
+    createdAtMs: now,
+    updatedAtMs: now,
+    schedule: { kind: "every", everyMs: 60_000 },
+    sessionTarget: "isolated",
+    wakeMode: "now",
+    payload,
+    state: {},
+  };
+}
+
+describe("runCronCommandJob", () => {
+  it("runs command argv and returns stdout as the deliverable summary", async () => {
+    const result = await runCronCommandJob({
+      job: makeCommandJob({
+        kind: "command",
+        argv: [process.execPath, "-e", "process.stdout.write('hello from cron')"],
+        timeoutSeconds: 5,
+      }),
+      nowMs: () => 123,
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.summary).toBe("hello from cron");
+    expect(result.diagnostics?.entries[0]).toMatchObject({
+      ts: 123,
+      source: "exec",
+      severity: "info",
+      exitCode: 0,
+    });
+  });
+
+  it("preserves exact NO_REPLY stdout for outbound suppression", async () => {
+    const result = await runCronCommandJob({
+      job: makeCommandJob({
+        kind: "command",
+        argv: [process.execPath, "-e", "process.stdout.write('NO_REPLY\\n')"],
+        timeoutSeconds: 5,
+      }),
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.summary).toBe("NO_REPLY");
+  });
+
+  it("marks non-zero exit codes as cron errors and keeps stderr as summary", async () => {
+    const result = await runCronCommandJob({
+      job: makeCommandJob({
+        kind: "command",
+        argv: [process.execPath, "-e", "process.stderr.write('bad thing'); process.exit(7)"],
+        timeoutSeconds: 5,
+      }),
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.error).toBe("command exited with code 7");
+    expect(result.summary).toBe("bad thing");
+    expect(result.diagnostics?.entries[0]).toMatchObject({
+      source: "exec",
+      severity: "error",
+      exitCode: 7,
+    });
+  });
+});
