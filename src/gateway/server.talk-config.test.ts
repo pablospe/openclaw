@@ -1,5 +1,6 @@
 // Talk config tests cover speech-provider config resolution, secret redaction,
 // device-authenticated access, and protocol payload validation.
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,6 +18,7 @@ import {
   connectOk,
   createGatewaySuiteHarness,
   installGatewayTestHooks,
+  onceMessage,
   readConnectChallengeNonce,
   rpcReq,
 } from "./test-helpers.js";
@@ -62,8 +64,9 @@ afterAll(async () => {
 });
 
 async function createFreshOperatorDevice(scopes: string[], nonce: string) {
+  const identityRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-talk-config-device-"));
   const identity = loadOrCreateDeviceIdentity(
-    path.join(os.tmpdir(), `openclaw-talk-config-device-${process.pid}-${talkConfigDeviceSeq++}`),
+    path.join(identityRoot, `${process.pid}-${talkConfigDeviceSeq++}`),
   );
   const signedAtMs = Date.now();
   const payload = buildDeviceAuthPayload({
@@ -129,11 +132,46 @@ async function fetchTalkConfig(
   return rpcReq<TalkConfigPayload>(ws, "talk.config", params ?? {}, 60_000);
 }
 
+async function fetchTalkConfigWithRuntimeSnapshot(
+  ws: GatewaySocket,
+  params?: { includeSecrets?: boolean } | Record<string, unknown>,
+) {
+  const { randomUUID } = await import("node:crypto");
+  const id = randomUUID();
+  const responsePromise = onceMessage<{
+    type: "res";
+    id: string;
+    ok: boolean;
+    payload?: TalkConfigPayload | null | undefined;
+    error?: { message?: string; code?: string };
+  }>(
+    ws,
+    (obj) => {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+        return false;
+      }
+      return obj.type === "res" && obj.id === id;
+    },
+    60_000,
+  );
+  ws.send(JSON.stringify({ type: "req", id, method: "talk.config", params: params ?? {} }));
+  return await responsePromise;
+}
+
 async function fetchOkTalkConfig(
   ws: GatewaySocket,
   params?: { includeSecrets?: boolean } | Record<string, unknown>,
 ) {
   const res = await fetchTalkConfig(ws, params);
+  expect(res.ok, JSON.stringify(res.error)).toBe(true);
+  return res;
+}
+
+async function fetchOkTalkConfigWithRuntimeSnapshot(
+  ws: GatewaySocket,
+  params?: { includeSecrets?: boolean } | Record<string, unknown>,
+) {
+  const res = await fetchTalkConfigWithRuntimeSnapshot(ws, params);
   expect(res.ok, JSON.stringify(res.error)).toBe(true);
   return res;
 }
@@ -157,6 +195,25 @@ function talkApiSecretRef() {
     provider: "default",
     id: GENERIC_TALK_API_ENV,
   } satisfies SecretRef;
+}
+
+async function activateCurrentTalkSecretsRuntimeSnapshot() {
+  const [
+    { readConfigFileSnapshot },
+    { activateSecretsRuntimeSnapshot, prepareSecretsRuntimeSnapshot },
+  ] = await Promise.all([import("../config/config.js"), import("../secrets/runtime.js")]);
+  const snapshot = await readConfigFileSnapshot();
+  const prepared = await prepareSecretsRuntimeSnapshot({
+    config: snapshot.sourceConfig,
+    includeAuthStoreRefs: false,
+    loadablePluginOrigins: new Map(),
+  });
+  activateSecretsRuntimeSnapshot(prepared);
+}
+
+async function clearTalkSecretsRuntimeSnapshot() {
+  const { clearSecretsRuntimeSnapshot } = await import("../secrets/runtime.js");
+  clearSecretsRuntimeSnapshot();
 }
 
 function speechProviderFixture(params: {
@@ -186,17 +243,22 @@ function speechProviderFixture(params: {
 async function expectTalkSecretsConfig(
   expected: Omit<Parameters<typeof expectTalkConfig>[1], "provider">,
 ) {
-  await withTalkConfigConnection(
-    ["operator.read", "operator.write", "operator.talk.secrets"],
-    async (ws) => {
-      const res = await fetchOkTalkConfig(ws, { includeSecrets: true });
-      expect(validateTalkConfigResult(res.payload)).toBe(true);
-      expectTalkConfig(res.payload?.config?.talk, {
-        provider: GENERIC_TALK_PROVIDER_ID,
-        ...expected,
-      });
-    },
-  );
+  await activateCurrentTalkSecretsRuntimeSnapshot();
+  try {
+    await withTalkConfigConnection(
+      ["operator.read", "operator.write", "operator.talk.secrets"],
+      async (ws) => {
+        const res = await fetchOkTalkConfigWithRuntimeSnapshot(ws, { includeSecrets: true });
+        expect(validateTalkConfigResult(res.payload)).toBe(true);
+        expectTalkConfig(res.payload?.config?.talk, {
+          provider: GENERIC_TALK_PROVIDER_ID,
+          ...expected,
+        });
+      },
+    );
+  } finally {
+    await clearTalkSecretsRuntimeSnapshot();
+  }
 }
 
 function expectTalkConfig(
@@ -307,13 +369,16 @@ describe("gateway talk.config", () => {
     });
   });
 
-  it("returns Talk SecretRef payloads that satisfy the protocol schema", async () => {
+  it("returns source SecretRef and resolved Talk secret payloads that satisfy the protocol schema", async () => {
     await writeTalkConfig({
       apiKey: talkApiSecretRef(),
     });
 
     await withEnvAsync({ [GENERIC_TALK_API_ENV]: "env-acme-key" }, async () => {
-      await expectTalkSecretsConfig({ apiKey: talkApiSecretRef() });
+      await expectTalkSecretsConfig({
+        providerApiKey: talkApiSecretRef(),
+        resolvedApiKey: "env-acme-key",
+      });
     });
   });
 
@@ -402,7 +467,8 @@ describe("gateway talk.config", () => {
 
           await expectTalkSecretsConfig({
             voiceId: "voice-secretref",
-            apiKey: talkApiSecretRef(),
+            providerApiKey: talkApiSecretRef(),
+            resolvedApiKey: "env-acme-key",
           });
         },
       );

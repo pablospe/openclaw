@@ -252,6 +252,45 @@ import Testing
         #expect(parsed.rawConfigApiKey == "__OPENCLAW_REDACTED__")
     }
 
+    @Test func parsesResolvedSecretRefApiKeyForNativeTalk() {
+        let config: [String: Any] = [
+            "talk": [
+                "provider": "elevenlabs",
+                "providers": [
+                    "elevenlabs": [
+                        "apiKey": [
+                            "source": "env",
+                            "provider": "default",
+                            "id": "ELEVENLABS_API_KEY",
+                        ],
+                        "voiceId": "voice-from-source",
+                    ],
+                ],
+                "resolved": [
+                    "provider": "elevenlabs",
+                    "config": [
+                        "apiKey": "resolved-test-key", // pragma: allowlist secret
+                        "modelId": "eleven_v3",
+                        "voiceId": "voice-from-source",
+                    ],
+                ],
+            ],
+        ]
+
+        let parsed = TalkModeGatewayConfigParser.parse(
+            config: config,
+            defaultProvider: "elevenlabs",
+            defaultModelIdFallback: "eleven_v3",
+            defaultRealtimeModelIdFallback: "gpt-realtime-2",
+            defaultSilenceTimeoutMs: 900)
+
+        #expect(parsed.activeProvider == "elevenlabs")
+        #expect(parsed.executionMode == .native)
+        #expect(parsed.defaultModelId == "eleven_v3")
+        #expect(parsed.defaultVoiceId == "voice-from-source")
+        #expect(parsed.rawConfigApiKey == "resolved-test-key")
+    }
+
     @Test func leavesNativeModeForManagedRoomRealtimeTransport() {
         let config: [String: Any] = [
             "talk": [
