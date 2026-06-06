@@ -7,7 +7,7 @@ import {
   createPluginStateSyncKeyedStoreForTests,
   resetPluginStateStoreForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VoiceCallConfigSchema } from "../config.js";
 import type { VoiceCallProvider } from "../providers/base.js";
 import { clearVoiceCallStateRuntime, setVoiceCallStateRuntime } from "../runtime-state.js";
@@ -54,6 +54,8 @@ afterEach(async () => {
   }
   clearVoiceCallStateRuntime();
   resetPluginStateStoreForTests();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 function createContext(overrides: Partial<CallManagerContext> = {}): CallManagerContext {
@@ -362,6 +364,92 @@ describe("processEvent (functional)", () => {
 
     expect(answeredCallId).toBe("call-2");
   });
+
+  it.each([
+    {
+      name: "speaking",
+      expectedState: "speaking",
+      createEvent: (timestamp: number): NormalizedEvent => ({
+        id: "evt-live-speaking",
+        type: "call.speaking",
+        callId: "call-live",
+        providerCallId: "provider-live",
+        timestamp,
+        text: "hello",
+      }),
+    },
+    {
+      name: "listening",
+      expectedState: "listening",
+      createEvent: (timestamp: number): NormalizedEvent => ({
+        id: "evt-live-listening",
+        type: "call.speech",
+        callId: "call-live",
+        providerCallId: "provider-live",
+        timestamp,
+        transcript: "hello",
+        isFinal: true,
+      }),
+    },
+  ])(
+    "starts max-duration enforcement when $name arrives before answered",
+    async ({ expectedState, createEvent }) => {
+      const now = new Date("2026-03-22T12:00:00.000Z").getTime();
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      const hangupCalls: HangupCallInput[] = [];
+      const ctx = createContext({
+        config: VoiceCallConfigSchema.parse({
+          enabled: true,
+          provider: "plivo",
+          fromNumber: "+15550000000",
+          maxDurationSeconds: 1,
+        }),
+        provider: createProvider({
+          hangupCall: async (input: HangupCallInput): Promise<void> => {
+            hangupCalls.push(input);
+          },
+        }),
+      });
+      ctx.activeCalls.set("call-live", {
+        callId: "call-live",
+        providerCallId: "provider-live",
+        provider: "plivo",
+        direction: "inbound",
+        state: "ringing",
+        from: "+15550000002",
+        to: "+15550000000",
+        startedAt: now - 120_000,
+        transcript: [],
+        processedEventIds: [],
+        metadata: {},
+      });
+      ctx.providerCallIdMap.set("provider-live", "call-live");
+      const liveTimestamp = now + 250;
+
+      processEvent(ctx, createEvent(liveTimestamp));
+
+      const call = ctx.activeCalls.get("call-live");
+      if (!call) {
+        throw new Error("expected live call to remain active");
+      }
+      expect(call.state).toBe(expectedState);
+      expect(call.answeredAt).toBe(liveTimestamp);
+      expect(ctx.maxDurationTimers.has("call-live")).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(hangupCalls).toEqual([
+        {
+          callId: "call-live",
+          providerCallId: "provider-live",
+          reason: "timeout",
+        },
+      ]);
+      expect(ctx.activeCalls.has("call-live")).toBe(false);
+      vi.useRealTimers();
+    },
+  );
 
   it("removes active call even when hangup rejects", () => {
     const provider = createProvider({

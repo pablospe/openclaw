@@ -134,6 +134,27 @@ function persistRejectedInboundCall(params: {
   persistCallRecord(params.ctx.storePath, rejectedCall);
 }
 
+function ensureMaxDurationTimerForLiveCall(
+  ctx: EventContext,
+  call: CallRecord,
+  event: NormalizedEvent,
+): void {
+  if (call.answeredAt) {
+    return;
+  }
+
+  // Twilio realtime streams can prove the call is live before an answered
+  // callback arrives; use that first live signal to enforce maxDurationSeconds.
+  call.answeredAt = event.timestamp;
+  startMaxDurationTimer({
+    ctx,
+    callId: call.callId,
+    onTimeout: async (callId) => {
+      await endCall(ctx, callId, { reason: "timeout" });
+    },
+  });
+}
+
 export function processEvent(ctx: EventContext, event: NormalizedEvent): void {
   const dedupeKey = event.dedupeKey || event.id;
   if (ctx.processedEventIds.has(dedupeKey)) {
@@ -277,6 +298,7 @@ export function processEvent(ctx: EventContext, event: NormalizedEvent): void {
       break;
 
     case "call.speaking":
+      ensureMaxDurationTimerForLiveCall(ctx, call, event);
       transitionState(call, "speaking");
       break;
 
@@ -297,6 +319,7 @@ export function processEvent(ctx: EventContext, event: NormalizedEvent): void {
         }
         addTranscriptEntry(call, "user", event.transcript);
       }
+      ensureMaxDurationTimerForLiveCall(ctx, call, event);
       transitionState(call, "listening");
       break;
 
