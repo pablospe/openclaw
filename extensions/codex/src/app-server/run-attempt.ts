@@ -437,6 +437,7 @@ export async function runCodexAppServerAttempt(
     execPolicy,
     modelProvider: reviewerPolicyContext.modelProvider,
     model: reviewerPolicyContext.model,
+    config: params.config,
     openClawSandboxActive: sandbox?.enabled === true,
   });
   const effectiveWorkspace = sandbox?.enabled
@@ -469,6 +470,8 @@ export async function runCodexAppServerAttempt(
     appServer: policyAppServer,
     provider: reviewerPolicyContext.modelProvider,
     model: reviewerPolicyContext.model,
+    config: params.config,
+    env: process.env,
   });
   if (configuredAppServer.approvalPolicy === "never" && appServer.approvalPolicy === "untrusted") {
     embeddedAgentLog.info("codex app-server approval policy promoted for OpenClaw tool policy", {
@@ -524,6 +527,7 @@ export async function runCodexAppServerAttempt(
     execPolicy,
     modelProvider: reviewerPolicyContext.modelProvider,
     model: reviewerPolicyContext.model,
+    config: params.config,
     openClawSandboxActive: sandbox?.enabled === true,
   });
   policyAppServer = resolveCodexAppServerForOpenClawToolPolicy({
@@ -542,6 +546,8 @@ export async function runCodexAppServerAttempt(
     appServer: policyAppServer,
     provider: reviewerPolicyContext.modelProvider,
     model: reviewerPolicyContext.model,
+    config: params.config,
+    env: process.env,
   });
   pluginAppServer = appServer;
   nativeHookRelayEvents = resolveCodexNativeHookRelayEvents({
