@@ -349,11 +349,62 @@ describe("Codex app-server config", () => {
       canUseCodexModelBackedApprovalsReviewerForModel({
         modelProvider: "openai",
         model: "gpt-5.5",
+        codexConfigToml: 'openai_base_url = "https://api.openai.com/v1"\n',
+      }),
+    ).toBe(true);
+    expect(
+      canUseCodexModelBackedApprovalsReviewerForModel({
+        modelProvider: "openai",
+        model: "gpt-5.5",
+        codexConfigToml: 'openai_base_url = "http://localhost:8080/v1"\n',
+      }),
+    ).toBe(false);
+    expect(
+      canUseCodexModelBackedApprovalsReviewerForModel({
+        modelProvider: "openai",
+        model: "gpt-5.5",
+        codexConfigToml: '[model_providers.openai]\nbase_url = "http://localhost:8080/v1"\n',
+      }),
+    ).toBe(false);
+    expect(
+      canUseCodexModelBackedApprovalsReviewerForModel({
+        modelProvider: "openai",
+        model: "gpt-5.5",
+        codexConfigToml: 'model_providers.openai.base_url = "http://localhost:8080/v1"\n',
+      }),
+    ).toBe(false);
+    expect(
+      canUseCodexModelBackedApprovalsReviewerForModel({
+        modelProvider: "openai",
+        model: "gpt-5.5",
+        codexConfigToml:
+          'model_providers = { openai = { base_url = "http://localhost:8080/v1" } }\n',
+      }),
+    ).toBe(false);
+    expect(
+      canUseCodexModelBackedApprovalsReviewerForModel({
+        modelProvider: "openai",
+        model: "gpt-5.5",
+        codexConfigToml: 'chatgpt_base_url = "https://chatgpt.com/backend-api/"\n',
+      }),
+    ).toBe(true);
+    expect(
+      canUseCodexModelBackedApprovalsReviewerForModel({
+        modelProvider: "openai",
+        model: "gpt-5.5",
+        codexConfigToml: 'chatgpt_base_url = "http://localhost:8080/backend-api"\n',
+      }),
+    ).toBe(false);
+    expect(
+      canUseCodexModelBackedApprovalsReviewerForModel({
+        modelProvider: "openai",
+        model: "gpt-5.5",
         config: {
           models: {
             providers: {
               openai: {
                 baseUrl: "http://localhost:8080/v1",
+                models: [],
               },
             },
           },
@@ -369,6 +420,43 @@ describe("Codex app-server config", () => {
         } as NodeJS.ProcessEnv,
       }),
     ).toBe(false);
+  });
+
+  it("uses user approvals when Codex native OpenAI config is local", () => {
+    const runtime = resolveRuntimeForTest({
+      execMode: "auto",
+      modelProvider: "openai",
+      model: "gpt-5.5",
+      codexConfigToml: 'openai_base_url = "http://localhost:8080/v1"\n',
+    });
+
+    expectRuntimePolicy(runtime, {
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      approvalsReviewer: "user",
+    });
+  });
+
+  it("forces prompting when explicit no-prompt config cannot use model-backed review", () => {
+    const runtime = resolveRuntimeForTest({
+      pluginConfig: {
+        appServer: {
+          mode: "guardian",
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+          approvalsReviewer: "auto_review",
+        },
+      },
+      modelProvider: "lmstudio",
+      model: "local-model",
+    });
+
+    expectRuntimePolicy(runtime, {
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      approvalsReviewer: "user",
+    });
+    expect(shouldAutoApproveCodexAppServerApprovals(runtime)).toBe(false);
   });
 
   it("uses user approvals when requirements force prompting but model provider is unknown", () => {

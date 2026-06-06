@@ -4620,6 +4620,7 @@ describe("runCodexAppServerAttempt", () => {
           providers: {
             openai: {
               baseUrl: "http://localhost:8080/v1",
+              models: [],
             },
           },
         },
@@ -4645,7 +4646,21 @@ describe("runCodexAppServerAttempt", () => {
   it("keeps Codex code-mode-only while disabling Guardian for provider-qualified local models", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
-    const { requests, waitForMethod, completeTurn } = createStartedThreadHarness();
+    const { requests, waitForMethod, completeTurn } = createStartedThreadHarness(async (method) => {
+      if (method === "thread/start") {
+        const response = threadStartResult();
+        return {
+          ...response,
+          thread: {
+            ...response.thread,
+            modelProvider: "lmstudio",
+          },
+          model: "local-model",
+          modelProvider: "lmstudio",
+        };
+      }
+      return undefined;
+    });
     const params = {
       ...createParams(sessionFile, workspaceDir),
       provider: "codex",
@@ -4673,8 +4688,8 @@ describe("runCodexAppServerAttempt", () => {
     const startRequest = requests.find((request) => request.method === "thread/start");
     const startRequestParams = startRequest?.params as Record<string, unknown> | undefined;
     const startConfig = startRequestParams?.config as Record<string, unknown> | undefined;
-    expect(startRequestParams?.model).toBe("lmstudio/local-model");
-    expect(startRequestParams).not.toHaveProperty("modelProvider");
+    expect(startRequestParams?.model).toBe("local-model");
+    expect(startRequestParams?.modelProvider).toBe("lmstudio");
     expect(startRequestParams?.approvalPolicy).toBe("on-request");
     expect(startRequestParams?.approvalsReviewer).toBe("user");
     expect(startConfig?.["features.code_mode"]).toBe(true);
@@ -4682,6 +4697,11 @@ describe("runCodexAppServerAttempt", () => {
 
     const turnRequest = requests.find((request) => request.method === "turn/start");
     const turnRequestParams = turnRequest?.params as Record<string, unknown> | undefined;
+    const collaborationMode = turnRequestParams?.collaborationMode as
+      | { settings?: Record<string, unknown> }
+      | undefined;
+    expect(turnRequestParams?.model).toBe("local-model");
+    expect(collaborationMode?.settings?.model).toBe("local-model");
     expect(turnRequestParams?.approvalsReviewer).toBe("user");
   });
 
@@ -4805,8 +4825,8 @@ describe("runCodexAppServerAttempt", () => {
 
     const resumeRequest = requests.find((request) => request.method === "thread/resume");
     const resumeRequestParams = resumeRequest?.params as Record<string, unknown> | undefined;
-    expect(resumeRequestParams?.model).toBe("openai/gpt-5.5");
-    expect(resumeRequestParams).not.toHaveProperty("modelProvider");
+    expect(resumeRequestParams?.model).toBe("gpt-5.5");
+    expect(resumeRequestParams?.modelProvider).toBe("openai");
     expect(resumeRequestParams?.approvalsReviewer).toBe("guardian_subagent");
   });
 

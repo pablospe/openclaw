@@ -2,6 +2,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { hostname as readHostName } from "node:os";
+import path from "node:path";
 import {
   resolveProviderIdForAuth,
   type ProviderAuthAliasLookupParams,
@@ -21,6 +22,8 @@ const START_OPTIONS_KEY_SECRET_SYMBOL = Symbol.for("openclaw.codexAppServerStart
 const START_OPTIONS_KEY_SECRET = getStartOptionsKeySecret();
 const UNIX_CODEX_REQUIREMENTS_PATH = "/etc/codex/requirements.toml";
 const WINDOWS_CODEX_REQUIREMENTS_SUFFIX = "\\OpenAI\\Codex\\requirements.toml";
+const CODEX_APP_SERVER_HOME_DIRNAME = "codex-home";
+const CODEX_CONFIG_TOML_FILENAME = "config.toml";
 const PLAIN_DECIMAL_NUMBER_RE = /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))$/;
 
 type CodexAppServerTransportMode = "stdio" | "websocket";
@@ -152,6 +155,8 @@ export type CodexModelBackedReviewerContext = {
   model?: string;
   config?: ProviderAuthAliasConfig;
   env?: NodeJS.ProcessEnv;
+  agentDir?: string;
+  codexConfigToml?: string | null;
 };
 
 export type CodexPluginConfig = {
@@ -409,6 +414,8 @@ export function resolveCodexAppServerRuntimeOptions(
     model?: string;
     config?: ProviderAuthAliasConfig;
     env?: NodeJS.ProcessEnv;
+    agentDir?: string;
+    codexConfigToml?: string | null;
     requirementsToml?: string | null;
     requirementsPath?: string;
     readRequirementsFile?: (path: string) => string | undefined;
@@ -454,25 +461,30 @@ export function resolveCodexAppServerRuntimeOptions(
     model: params.model,
     config: params.config,
     env,
+    agentDir: params.agentDir,
+    codexConfigToml: params.codexConfigToml,
   });
   const explicitModelBackedReviewer =
     explicitApprovalsReviewer === "auto_review" ||
     explicitApprovalsReviewer === "guardian_subagent";
   const forceUserReviewerForUnknownModel =
     !canUseModelBackedReviewer &&
-    (explicitModelBackedReviewer || explicitPolicyMode === "guardian");
+    (explicitModelBackedReviewer ||
+      (explicitPolicyMode === "guardian" && explicitApprovalsReviewer !== "user"));
   const forceUserReviewerForExecMode =
     execMode !== undefined &&
     execMode !== "full" &&
     (execMode !== "auto" || !canUseModelBackedReviewer);
   const forceUserReviewer = forceUserReviewerForUnknownModel || forceUserReviewerForExecMode;
   const forceGuardianReviewer = execMode === "auto" && canUseModelBackedReviewer;
+  const execModeRequiringPromptingApprovals: Extract<OpenClawExecMode, "auto" | "ask"> | undefined =
+    execMode === "auto" || execMode === "ask" ? execMode : forceUserReviewer ? "ask" : undefined;
   const forceDangerFullAccessSandbox =
     params.execPolicy?.touched === true &&
     params.execPolicy.security === "full" &&
     params.execPolicy.ask === "always";
   const forceRuntimePolicy =
-    forceUserReviewerForExecMode || forceGuardianReviewer || forceDangerFullAccessSandbox;
+    forceUserReviewer || forceGuardianReviewer || forceDangerFullAccessSandbox;
   const defaultPolicy =
     explicitPolicyMode && !forceRuntimePolicy && !ignoreLegacyYoloPolicyMode
       ? undefined
@@ -481,8 +493,7 @@ export function resolveCodexAppServerRuntimeOptions(
           env,
           forceGuardian: normalizedPolicyMode === "guardian",
           forceUserReviewer: forceUserReviewer || !canUseModelBackedReviewer,
-          execModeRequiringPromptingApprovals:
-            execMode === "auto" || execMode === "ask" ? execMode : undefined,
+          execModeRequiringPromptingApprovals,
           requirementsToml: params.requirementsToml,
           requirementsPath: params.requirementsPath,
           readRequirementsFile: params.readRequirementsFile,
@@ -510,18 +521,6 @@ export function resolveCodexAppServerRuntimeOptions(
           defaultPolicy?.approvalsReviewer ?? (forceUserReviewer ? "user" : "auto_review"),
       }
     : undefined;
-  const forcedApprovalsReviewer =
-    forceUserReviewer && !forceRuntimePolicy
-      ? selectForcedUserApprovalsReviewer({
-          env,
-          requirementsToml: params.requirementsToml,
-          requirementsPath: params.requirementsPath,
-          readRequirementsFile: params.readRequirementsFile,
-          platform: params.platform,
-          hostName: params.hostName,
-          execModeRequiringUserReviewer: execMode,
-        })
-      : undefined;
   const policyMode = ignoreLegacyYoloPolicyMode
     ? normalizedPolicyMode
     : (explicitPolicyMode ?? normalizedPolicyMode ?? defaultPolicy?.mode ?? "yolo");
@@ -580,7 +579,6 @@ export function resolveCodexAppServerRuntimeOptions(
       defaultPolicy?.sandbox ??
       (policyMode === "guardian" ? "workspace-write" : "danger-full-access"),
     approvalsReviewer:
-      forcedApprovalsReviewer ??
       forcedPolicy?.approvalsReviewer ??
       explicitApprovalsReviewer ??
       defaultPolicy?.approvalsReviewer ??
@@ -629,8 +627,18 @@ export function isTrustedCodexModelBackedOpenAIProvider(params: {
   config?: ProviderAuthAliasConfig;
   env?: NodeJS.ProcessEnv;
   model?: string;
+  agentDir?: string;
+  codexConfigToml?: string | null;
 }): boolean {
   if (!isNativeOpenAIBaseUrl(params.env?.OPENAI_BASE_URL ?? params.env?.OPENAI_API_BASE)) {
+    return false;
+  }
+  const codexBaseUrlOverrides = readCodexBaseUrlOverridesForModelBackedReview(params);
+  if (
+    codexBaseUrlOverrides === false ||
+    !codexBaseUrlOverrides.openAI.every(isNativeOpenAIBaseUrl) ||
+    !codexBaseUrlOverrides.chatGPT.every(isNativeChatGPTBaseUrl)
+  ) {
     return false;
   }
   const openAIProviders = readConfiguredOpenAIProvidersForModelBackedReview(params.config);
@@ -638,7 +646,7 @@ export function isTrustedCodexModelBackedOpenAIProvider(params: {
     return true;
   }
   return openAIProviders.every((openAIProvider) =>
-    configuredOpenAIProviderIsTrustedForModelBackedReview(openAIProvider, params.model)
+    configuredOpenAIProviderIsTrustedForModelBackedReview(openAIProvider, params.model),
   );
 }
 
@@ -905,14 +913,14 @@ function readCodexRequirementsToml(params: {
   if (params.requirementsToml !== undefined) {
     return params.requirementsToml ?? undefined;
   }
-  const path =
+  const requirementsPath =
     readNonEmptyString(params.requirementsPath) ??
     resolveCodexRequirementsPath(params.env ?? process.env, params.platform ?? process.platform);
   try {
     if (params.readRequirementsFile) {
-      return params.readRequirementsFile(path);
+      return params.readRequirementsFile(requirementsPath);
     }
-    return readFileSync(path, "utf8");
+    return readFileSync(requirementsPath, "utf8");
   } catch {
     return undefined;
   }
@@ -1004,6 +1012,34 @@ function parseTopLevelRequirementsStringArray(content: string, key: string): str
   return parseRequirementsStringArray(topLevelContent, key);
 }
 
+function parseTomlStringValue(content: string, key: string): string | undefined {
+  const match = parseTomlStringAssignment(content, tomlDottedKeyPattern(key));
+  return match ? (match[1] ?? match[2] ?? "") : undefined;
+}
+
+function parseInlineOpenAIModelProviderBaseUrl(content: string): string | undefined {
+  const match = parseTomlStringAssignment(
+    content,
+    `${tomlKeyPattern("model_providers")}\\s*=\\s*\\{[\\s\\S]*?${tomlKeyPattern("openai")}\\s*=\\s*\\{[\\s\\S]*?${tomlKeyPattern("base_url")}`,
+  );
+  return match ? (match[1] ?? match[2] ?? "") : undefined;
+}
+
+function parseTomlStringAssignment(content: string, keyPattern: string): RegExpMatchArray | null {
+  return content.match(
+    new RegExp(`(?:^|\\n)\\s*${keyPattern}\\s*=\\s*(?:"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"|'([^']*)')`),
+  );
+}
+
+function tomlDottedKeyPattern(key: string): string {
+  return key.split(".").map(tomlKeyPattern).join("\\s*\\.\\s*");
+}
+
+function tomlKeyPattern(key: string): string {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `(?:"${escaped}"|'${escaped}'|${escaped})`;
+}
+
 function parseRequirementsStringArray(content: string, key: string): string[] | undefined {
   const match = content.match(new RegExp(`(?:^|\\n)\\s*${key}\\s*=\\s*\\[([\\s\\S]*?)\\]`));
   if (!match) {
@@ -1015,6 +1051,20 @@ function parseRequirementsStringArray(content: string, key: string): string[] | 
     return undefined;
   }
   return stringMatches.map((entry) => entry[1] ?? entry[2] ?? "");
+}
+
+function parseTomlTableSection(content: string, table: string): string | undefined {
+  const strippedContent = stripTomlLineComments(content);
+  const tablePattern = tomlDottedKeyPattern(table);
+  const headerPattern = new RegExp(`^\\s*\\[\\s*${tablePattern}\\s*\\]\\s*$`, "m");
+  const match = headerPattern.exec(strippedContent);
+  if (!match) {
+    return undefined;
+  }
+  const sectionStart = match.index + match[0].length;
+  const rest = strippedContent.slice(sectionStart);
+  const nextTableOffset = rest.search(/^\s*\[/m);
+  return nextTableOffset === -1 ? rest : rest.slice(0, nextTableOffset);
 }
 
 function parseTomlArrayTableSections(content: string, table: string): string[] {
@@ -1192,24 +1242,6 @@ function selectUserApprovalsReviewer(
   );
 }
 
-function selectForcedUserApprovalsReviewer(params: {
-  env?: NodeJS.ProcessEnv;
-  requirementsToml?: string | null;
-  requirementsPath?: string;
-  readRequirementsFile?: (path: string) => string | undefined;
-  platform?: NodeJS.Platform;
-  hostName?: string;
-  execModeRequiringUserReviewer?: OpenClawExecMode;
-}): CodexAppServerApprovalsReviewer {
-  const content = readCodexRequirementsToml(params);
-  const allowedApprovalsReviewers =
-    content === undefined ? undefined : parseAllowedApprovalsReviewersFromCodexRequirements(content);
-  return selectUserApprovalsReviewer(
-    allowedApprovalsReviewers,
-    params.execModeRequiringUserReviewer,
-  );
-}
-
 function isCodexModelBackedApprovalsReviewerProvider(provider: string | undefined): boolean {
   const normalized = provider?.trim().toLowerCase();
   return normalized === "openai";
@@ -1217,7 +1249,7 @@ function isCodexModelBackedApprovalsReviewerProvider(provider: string | undefine
 
 function isTrustedCodexModelBackedApprovalsReviewerProvider(
   provider: string | undefined,
-  params: Pick<CodexModelBackedReviewerContext, "config" | "env" | "model">,
+  params: CodexModelBackedReviewerContext,
 ): boolean {
   return (
     isCodexModelBackedApprovalsReviewerProvider(provider) &&
@@ -1225,8 +1257,73 @@ function isTrustedCodexModelBackedApprovalsReviewerProvider(
       config: params.config,
       env: params.env,
       model: params.model,
+      agentDir: params.agentDir,
+      codexConfigToml: params.codexConfigToml,
     })
   );
+}
+
+function readCodexBaseUrlOverridesForModelBackedReview(
+  params: Pick<CodexModelBackedReviewerContext, "agentDir" | "codexConfigToml">,
+): { openAI: string[]; chatGPT: string[] } | false {
+  const configToml = readCodexAppServerConfigToml(params);
+  if (configToml === false) {
+    return false;
+  }
+  if (configToml === undefined) {
+    return { openAI: [], chatGPT: [] };
+  }
+  const topLevelContent = stripTomlLineComments(configToml).slice(
+    0,
+    firstTomlTableOffset(configToml),
+  );
+  const modelProviderOpenAISection = parseTomlTableSection(configToml, "model_providers.openai");
+  return {
+    openAI: [
+      parseTomlStringValue(topLevelContent, "openai_base_url"),
+      parseTomlStringValue(topLevelContent, "model_providers.openai.base_url"),
+      parseInlineOpenAIModelProviderBaseUrl(topLevelContent),
+      modelProviderOpenAISection
+        ? parseTomlStringValue(modelProviderOpenAISection, "base_url")
+        : undefined,
+    ].filter((entry): entry is string => entry !== undefined),
+    chatGPT: [parseTomlStringValue(topLevelContent, "chatgpt_base_url")].filter(
+      (entry): entry is string => entry !== undefined,
+    ),
+  };
+}
+
+function readCodexAppServerConfigToml(
+  params: Pick<CodexModelBackedReviewerContext, "agentDir" | "codexConfigToml">,
+): string | undefined | false {
+  if (params.codexConfigToml !== undefined) {
+    return params.codexConfigToml ?? undefined;
+  }
+  const configPath = resolveCodexAppServerConfigPath(params);
+  if (!configPath) {
+    return undefined;
+  }
+  try {
+    return readFileSync(configPath, "utf8");
+  } catch (error) {
+    return readErrorCode(error) === "ENOENT" ? undefined : false;
+  }
+}
+
+function resolveCodexAppServerConfigPath(
+  params: Pick<CodexModelBackedReviewerContext, "agentDir">,
+): string | undefined {
+  const agentDir = readNonEmptyString(params.agentDir);
+  const codexHome = agentDir
+    ? path.join(path.resolve(agentDir), CODEX_APP_SERVER_HOME_DIRNAME)
+    : undefined;
+  return codexHome ? path.join(codexHome, CODEX_CONFIG_TOML_FILENAME) : undefined;
+}
+
+function readErrorCode(error: unknown): string | undefined {
+  return error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
 }
 
 function readConfiguredOpenAIProvidersForModelBackedReview(
@@ -1300,6 +1397,18 @@ function isNativeOpenAIBaseUrl(value: unknown): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "https:" && url.hostname.toLowerCase() === "api.openai.com";
+  } catch {
+    return false;
+  }
+}
+
+function isNativeChatGPTBaseUrl(value: unknown): boolean {
+  if (typeof value !== "string" || !value.trim()) {
+    return true;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname.toLowerCase() === "chatgpt.com";
   } catch {
     return false;
   }

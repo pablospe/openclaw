@@ -109,6 +109,7 @@ describe("Codex app-server policy", () => {
           providers: {
             openai: {
               baseUrl: "http://localhost:8080/v1",
+              models: [],
             },
           },
         },
@@ -126,6 +127,7 @@ describe("Codex app-server policy", () => {
             providers: {
               openai: {
                 baseUrl: "http://localhost:8080/v1",
+                models: [],
               },
             },
           },

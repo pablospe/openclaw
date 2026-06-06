@@ -1,16 +1,18 @@
+import {
+  buildExecAutoReviewInputForShellCommand,
+  reviewExecRequestWithConfiguredModel,
+} from "openclaw/plugin-sdk/agent-harness-exec-review-runtime";
 /**
  * Bridges Codex app-server approval requests into OpenClaw policy hooks and
  * plugin approval UX.
  */
 import {
   type AgentApprovalEventData,
-  buildExecAutoReviewInputForShellCommand,
   buildAgentHookContextChannelFields,
   formatApprovalDisplayPath,
   hasNativeHookRelayInvocation,
   invokeNativeHookRelay,
   resolveNativeHookRelayDeferredToolApproval,
-  reviewExecRequestWithConfiguredModel,
   type EmbeddedRunAttemptParams,
   type NativeHookRelayProcessResponse,
   type NativeHookRelayRegistrationHandle,
@@ -403,6 +405,7 @@ async function runInternalExecAutoReviewForApprovalRequest(params: {
       reviewerConfig,
       params.paramsForRun.config,
       process.env,
+      params.paramsForRun.agentDir,
     )
   ) {
     return undefined;
@@ -483,6 +486,7 @@ function hasCommandApprovalCapabilityAmendments(requestParams: JsonObject | unde
   return (
     hasNonEmptyJsonObject(requestParams?.additionalPermissions) ||
     hasNonEmptyJsonObject(requestParams?.networkApprovalContext) ||
+    hasNonEmptyJsonObject(requestParams?.proposedExecpolicyAmendment) ||
     hasNonEmptyArray(requestParams?.proposedExecpolicyAmendment) ||
     hasNonEmptyArray(requestParams?.proposedNetworkPolicyAmendments) ||
     findAvailableCommandAmendmentDecision(requestParams) !== undefined ||
@@ -517,6 +521,7 @@ function canUseInternalExecAutoReviewReviewer(
   reviewerConfig: Record<string, unknown> | undefined,
   config: EmbeddedRunAttemptParams["config"] | undefined,
   env: NodeJS.ProcessEnv | undefined,
+  agentDir: string | undefined,
 ): boolean {
   const model = readExecReviewerModelRef(reviewerConfig);
   const slashIndex = model?.indexOf("/") ?? -1;
@@ -533,6 +538,7 @@ function canUseInternalExecAutoReviewReviewer(
   return isTrustedCodexModelBackedOpenAIProvider({
     config,
     env,
+    agentDir,
     model: model.slice(slashIndex + 1).trim(),
   });
 }

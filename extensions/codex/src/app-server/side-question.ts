@@ -79,8 +79,9 @@ import {
 import {
   buildCodexRuntimeThreadConfig,
   CODEX_NATIVE_PERSONALITY_NONE,
-  resolveCodexBindingModelProviderFallback,
+  resolveCodexAppServerRequestModelSelection,
   resolveCodexAppServerModelProvider,
+  resolveCodexBindingModelProviderFallback,
   resolveReasoningEffort,
 } from "./thread-lifecycle.js";
 import { filterToolsForVisionInputs } from "./vision-tools.js";
@@ -177,6 +178,13 @@ export async function runCodexAppServerSideQuestion(
       bindingModel: binding.model,
       bindingModelProvider: binding.modelProvider,
     });
+  const modelSelection = resolveCodexAppServerRequestModelSelection({
+    model: params.model,
+    modelProvider,
+    authProfileId,
+    agentDir: params.agentDir,
+    config: params.cfg,
+  });
   const reviewerPolicyContext = resolveCodexModelBackedReviewerPolicyContext({
     provider: params.provider,
     model: params.model,
@@ -194,6 +202,7 @@ export async function runCodexAppServerSideQuestion(
     modelProvider: reviewerPolicyContext.modelProvider,
     model: reviewerPolicyContext.model,
     config: params.cfg,
+    agentDir: params.agentDir,
   });
   const client = await getLeasedSharedCodexAppServerClient({
     startOptions: appServer.start,
@@ -228,12 +237,14 @@ export async function runCodexAppServerSideQuestion(
       model: reviewerPolicyContext.model,
       config: params.cfg,
       env: process.env,
+      agentDir: params.agentDir,
     });
     const useModelScopedPolicy = !canUseCodexModelBackedApprovalsReviewerForModel({
       modelProvider: reviewerPolicyContext.modelProvider,
       model: reviewerPolicyContext.model,
       config: params.cfg,
       env: process.env,
+      agentDir: params.agentDir,
     });
     const approvalPolicy = useModelScopedPolicy
       ? modelScopedAppServer.approvalPolicy
@@ -381,8 +392,8 @@ export async function runCodexAppServerSideQuestion(
         client,
         {
           threadId: binding.threadId,
-          model: params.model,
-          ...(modelProvider ? { modelProvider } : {}),
+          model: modelSelection.model,
+          ...(modelSelection.modelProvider ? { modelProvider: modelSelection.modelProvider } : {}),
           personality: CODEX_NATIVE_PERSONALITY_NONE,
           cwd,
           approvalPolicy,
@@ -408,7 +419,7 @@ export async function runCodexAppServerSideQuestion(
       { timeoutMs: appServer.requestTimeoutMs, signal: params.opts?.abortSignal },
     );
 
-    const effort = resolveReasoningEffort(params.resolvedThinkLevel ?? "off", params.model);
+    const effort = resolveReasoningEffort(params.resolvedThinkLevel ?? "off", modelSelection.model);
     const turnResponse = assertCodexTurnStartResponse(
       await client.request(
         "turn/start",
@@ -416,14 +427,14 @@ export async function runCodexAppServerSideQuestion(
           threadId: childThreadId,
           input: [{ type: "text", text: params.question.trim(), text_elements: [] }],
           cwd,
-          model: params.model,
+          model: modelSelection.model,
           personality: CODEX_NATIVE_PERSONALITY_NONE,
           ...(serviceTier ? { serviceTier } : {}),
           effort,
           collaborationMode: {
             mode: "default",
             settings: {
-              model: params.model,
+              model: modelSelection.model,
               reasoning_effort: effort,
               developer_instructions: null,
             },

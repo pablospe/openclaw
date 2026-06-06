@@ -13,11 +13,14 @@ import {
   readCodexAppServerBinding,
   writeCodexAppServerBinding,
 } from "./app-server/session-binding.js";
-import { resolveCodexBindingModelProviderFallback } from "./app-server/thread-lifecycle.js";
 import {
   getLeasedSharedCodexAppServerClient,
   releaseLeasedSharedCodexAppServerClient,
 } from "./app-server/shared-client.js";
+import {
+  resolveCodexAppServerRequestModelSelection,
+  resolveCodexBindingModelProviderFallback,
+} from "./app-server/thread-lifecycle.js";
 import { formatCodexDisplayText } from "./command-formatters.js";
 
 type ActiveTurn = {
@@ -157,6 +160,7 @@ export async function setCodexConversationModel(params: {
     modelProvider: reviewerPolicyContext.modelProvider,
     model: reviewerPolicyContext.model,
     config: params.config,
+    agentDir: params.agentDir,
   });
   const modelProvider = resolveConversationControlModelProvider({
     authProfileId: binding.authProfileId,
@@ -165,21 +169,27 @@ export async function setCodexConversationModel(params: {
     currentModel: model,
     ...lookup,
   });
+  const modelSelection = resolveCodexAppServerRequestModelSelection({
+    model,
+    modelProvider,
+    authProfileId: binding.authProfileId,
+    ...lookup,
+  });
   const response = await resumeThreadWithOverrides({
     runtime,
     threadId: binding.threadId,
     authProfileId: binding.authProfileId,
     ...lookup,
-    model,
-    modelProvider,
+    model: modelSelection.model,
+    modelProvider: modelSelection.modelProvider,
   });
   await writeCodexAppServerBinding(
     params.sessionFile,
     {
       ...binding,
       cwd: response.thread.cwd ?? binding.cwd,
-      model: response.model ?? model,
-      modelProvider: response.modelProvider ?? modelProvider,
+      model: response.model ?? modelSelection.model,
+      modelProvider: response.modelProvider ?? modelSelection.modelProvider,
       approvalPolicy: binding.approvalPolicy,
       sandbox: binding.sandbox,
       serviceTier: binding.serviceTier ?? runtime.serviceTier,

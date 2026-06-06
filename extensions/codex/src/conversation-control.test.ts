@@ -118,9 +118,10 @@ describe("codex conversation controls", () => {
       approvalPolicy: "on-request",
       sandbox: "workspace-write",
     });
-    const request = vi.fn(async () => ({
+    const request = vi.fn(async (_method: string, _requestParams?: unknown) => ({
       thread: { id: "thread-1", cwd: tempDir },
-      model: "openai/gpt-5.5",
+      model: "gpt-5.5",
+      modelProvider: "openai",
     }));
     sharedClientMocks.getSharedCodexAppServerClient.mockResolvedValue({ request });
 
@@ -130,14 +131,14 @@ describe("codex conversation controls", () => {
         model: "openai/gpt-5.5",
         pluginConfig: { appServer: { mode: "guardian" } },
       }),
-    ).resolves.toBe("Codex model set to openai/gpt-5.5.");
+    ).resolves.toBe("Codex model set to gpt-5.5.");
 
     const resumeParams = request.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
     const binding = await readCodexAppServerBinding(sessionFile);
-    expect(resumeParams?.model).toBe("openai/gpt-5.5");
-    expect(resumeParams).not.toHaveProperty("modelProvider");
+    expect(resumeParams?.model).toBe("gpt-5.5");
+    expect(resumeParams?.modelProvider).toBe("openai");
     expect(resumeParams?.approvalsReviewer).toBe("auto_review");
-    expect(binding?.modelProvider).toBeUndefined();
+    expect(binding?.modelProvider).toBe("openai");
   });
 
   it("keeps the bound local provider when switching to another unqualified model", async () => {
@@ -150,7 +151,7 @@ describe("codex conversation controls", () => {
       approvalPolicy: "on-request",
       sandbox: "workspace-write",
     });
-    const request = vi.fn(async () => ({
+    const request = vi.fn(async (_method: string, _requestParams?: unknown) => ({
       thread: { id: "thread-1", cwd: tempDir },
       model: "local-model-2",
       modelProvider: "lmstudio",
@@ -181,7 +182,7 @@ describe("codex conversation controls", () => {
       approvalPolicy: "on-request",
       sandbox: "workspace-write",
     });
-    const request = vi.fn(async () => ({
+    const request = vi.fn(async (_method: string, _requestParams?: unknown) => ({
       thread: { id: "thread-1", cwd: tempDir },
       model: "openai/gpt-oss-20b",
       modelProvider: "lmstudio",

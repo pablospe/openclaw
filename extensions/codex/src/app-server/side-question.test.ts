@@ -877,8 +877,8 @@ describe("runCodexAppServerSideQuestion", () => {
 
     const forkParams = mockCall(client.request)[1] as Record<string, unknown> | undefined;
     const config = forkParams?.config as Record<string, unknown> | undefined;
-    expect(forkParams?.model).toBe("lmstudio/local-model");
-    expect(forkParams).not.toHaveProperty("modelProvider");
+    expect(forkParams?.model).toBe("local-model");
+    expect(forkParams?.modelProvider).toBe("lmstudio");
     expect(forkParams?.approvalPolicy).toBe("on-request");
     expect(forkParams?.sandbox).toBe("workspace-write");
     expect(forkParams?.approvalsReviewer).toBe("user");
@@ -1005,7 +1005,7 @@ describe("runCodexAppServerSideQuestion", () => {
     ).resolves.toEqual({ text: "Side answer." });
 
     const forkParams = mockCall(client.request)[1] as Record<string, unknown> | undefined;
-    expect(forkParams?.model).toBe("openai/gpt-5.5");
+    expect(forkParams?.model).toBe("gpt-5.5");
     expect(forkParams).not.toHaveProperty("modelProvider");
     expect(forkParams?.approvalsReviewer).toBe("auto_review");
   });

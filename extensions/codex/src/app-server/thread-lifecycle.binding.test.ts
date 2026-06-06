@@ -187,7 +187,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
     const appServer = createThreadLifecycleAppServerOptions();
     const abortController = new AbortController();
     let resolveStart: ((value: ReturnType<typeof threadStartResult>) => void) | undefined;
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, _requestParams?: unknown) => {
       if (method === "thread/start") {
         return await new Promise<ReturnType<typeof threadStartResult>>((resolve) => {
           resolveStart = resolve;
@@ -221,7 +221,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
     const workspaceDir = path.join(tempDir, "workspace");
     const params = createParams(sessionFile, workspaceDir);
     const appServer = createThreadLifecycleAppServerOptions();
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, _requestParams?: unknown) => {
       if (method === "thread/start") {
         return threadStartResult("thread-existing");
       }
@@ -269,7 +269,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
     params.provider = "codex";
     params.modelId = "local-model-2";
     const appServer = createThreadLifecycleAppServerOptions();
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, _requestParams?: unknown) => {
       if (method === "thread/resume") {
         throw new Error("stale thread");
       }
@@ -318,7 +318,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
     params.provider = "codex";
     params.modelId = "local-model-2";
     const appServer = createThreadLifecycleAppServerOptions();
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, _requestParams?: unknown) => {
       if (method === "thread/start") {
         const response = threadStartResult("thread-new");
         response.model = "local-model-2";
@@ -361,7 +361,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
     params.provider = "codex";
     params.modelId = "openai/gpt-oss-20b";
     const appServer = createThreadLifecycleAppServerOptions();
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, _requestParams?: unknown) => {
       if (method === "thread/resume") {
         const response = threadStartResult("thread-existing");
         response.model = "openai/gpt-oss-20b";

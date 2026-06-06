@@ -1203,7 +1203,7 @@ describe("codex conversation binding", () => {
     });
   });
 
-  it("blocks Guardian-mode bound turns on custom model providers before auto-declining approvals", async () => {
+  it("blocks Guardian-mode bound turns with stale no-approval policy on custom model providers", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     await fs.writeFile(
       `${sessionFile}.codex-app-server.json`,
@@ -1213,8 +1213,8 @@ describe("codex conversation binding", () => {
         cwd: tempDir,
         model: "local-model",
         modelProvider: "lmstudio",
-        approvalPolicy: "on-request",
-        sandbox: "workspace-write",
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
       }),
     );
     let notificationHandler: ((notification: unknown) => void) | undefined;
