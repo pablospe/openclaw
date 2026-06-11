@@ -36,6 +36,7 @@ import {
   enqueueCliRun,
   prepareCliPromptImagePayload,
   resolveCliNoOutputTimeoutMs,
+  resolveCliRunTimeoutOverrideMs,
   resolvePromptInput,
   resolveSessionIdToSend,
   resolveSystemPromptUsage,
@@ -449,9 +450,16 @@ export async function executePreparedCliRun(
           }
         }
 
+        const runTimeoutOverrideMs = resolveCliRunTimeoutOverrideMs({
+          config: params.config,
+          lane: params.lane,
+          timeoutMs: params.timeoutMs,
+          runTimeoutOverrideMs: params.runTimeoutOverrideMs,
+        });
         const noOutputTimeoutMs = resolveCliNoOutputTimeoutMs({
           backend,
           timeoutMs: params.timeoutMs,
+          runTimeoutOverrideMs,
           useResume,
           trigger: params.trigger,
         });
@@ -556,7 +564,6 @@ export async function executePreparedCliRun(
             },
             onToolUseStart: emitCliToolUseStart,
             onToolResult: emitCliToolResult,
-            classifyCommentaryText: context.params.classifyCommentaryText,
             onCommentaryText: context.params.emitCommentaryText ? emitCliCommentaryText : undefined,
             cleanup: async () => {
               try {
@@ -602,7 +609,6 @@ export async function executePreparedCliRun(
               },
               onToolUseStart: emitCliToolUseStart,
               onToolResult: emitCliToolResult,
-              classifyCommentaryText: context.params.classifyCommentaryText,
               onCommentaryText: context.params.emitCommentaryText
                 ? emitCliCommentaryText
                 : undefined,
