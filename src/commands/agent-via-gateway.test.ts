@@ -155,37 +155,11 @@ function createSignalProcess() {
 }
 
 async function waitForAgentCommandCall(expectedCalls = 1) {
-  for (
-    let attempt = 0;
-    attempt < 50 && agentCommand.mock.calls.length < expectedCalls;
-    attempt += 1
-  ) {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-  }
-  expect(agentCommand).toHaveBeenCalledTimes(expectedCalls);
+  await vi.waitFor(() => expect(agentCommand).toHaveBeenCalledTimes(expectedCalls));
 }
 
 async function waitForGatewayCall(expectedCalls = 1) {
-  for (
-    let attempt = 0;
-    attempt < 50 && callGateway.mock.calls.length < expectedCalls;
-    attempt += 1
-  ) {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-  }
-  expect(callGateway).toHaveBeenCalledTimes(expectedCalls);
-}
-
-function createDeferredVoid() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((value) => {
-    resolve = value;
-  });
-  return { promise, resolve };
+  await vi.waitFor(() => expect(callGateway).toHaveBeenCalledTimes(expectedCalls));
 }
 
 function mockMessages(mock: unknown): string[] {
@@ -1120,7 +1094,6 @@ describe("agentCliCommand", () => {
   it("passes SIGTERM abort signals into local agent runs", async () => {
     await withTempStore(async () => {
       const signals = createSignalProcess();
-      const abortListenerAttached = createDeferredVoid();
       agentCommand.mockImplementationOnce(async (opts: { abortSignal?: AbortSignal }) => {
         expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
         return await new Promise((_, reject) => {
@@ -1133,7 +1106,6 @@ describe("agentCliCommand", () => {
             },
             { once: true },
           );
-          abortListenerAttached.resolve();
         });
       });
 
@@ -1141,7 +1113,6 @@ describe("agentCliCommand", () => {
         process: signals.processLike,
       });
       await waitForAgentCommandCall();
-      await abortListenerAttached.promise;
       signals.emit("SIGTERM");
 
       await run;
@@ -1155,7 +1126,6 @@ describe("agentCliCommand", () => {
   it("exits for local runs that resolve after SIGTERM aborts them", async () => {
     await withTempStore(async () => {
       const signals = createSignalProcess();
-      const abortListenerAttached = createDeferredVoid();
       agentCommand.mockImplementationOnce(async (opts: { abortSignal?: AbortSignal }) => {
         return await new Promise((resolve) => {
           opts.abortSignal?.addEventListener(
@@ -1168,7 +1138,6 @@ describe("agentCliCommand", () => {
             },
             { once: true },
           );
-          abortListenerAttached.resolve();
         });
       });
 
@@ -1176,7 +1145,6 @@ describe("agentCliCommand", () => {
         process: signals.processLike,
       });
       await waitForAgentCommandCall();
-      await abortListenerAttached.promise;
       signals.emit("SIGTERM");
 
       await expect(run).resolves.toBeUndefined();
